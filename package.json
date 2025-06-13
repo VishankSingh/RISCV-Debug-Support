@@ -1,0 +1,199 @@
+{
+  "name": "riscv-debug-support",
+  "displayName": "RISC-V Debug Support",
+  "description": "",
+  "version": "0.0.7",
+  "publisher": "Vishank",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Debuggers"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VishankSingh/RISCV-Debug-Support"
+  },
+  "bugs": {
+    "url": "https://github.com/VishankSingh/RISCV-Debug-Support/issues"
+  },
+  "homepage": "https://github.com/VishankSingh/RISCV-Debug-Support#readme",
+  "activationEvents": [
+    "onDebugResolve:riscvSimpleDebug",
+    "onDebug:type:riscvSimpleDebug"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "riscv-debug-support.showVmMemory",
+        "title": "Riscv Support: Dump VM Memory"
+      },
+      {
+        "command": "riscv-debug-support.riscvSimpleDebug.getProgramName",
+        "title": "Riscv Support: Get Program Name"
+      }
+    ],
+    "viewsContainers": {},
+    "views": {
+      "debug": [
+        {
+          "id": "riscvMemoryTools",
+          "name": "Riscv VM utilities",
+          "when": "riscvDebugRunning"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "riscvMemoryTools",
+        "contents": "[Show Memory](command:riscv-debug-support.showVmMemory)"
+      }
+    ],
+    "configuration": {
+      "title": "RISC-V Debug Support",
+      "properties": {
+        "riscv-debug-support.vmBinaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the VM binary executable"
+        },
+        
+        "riscv-debug-support.Memory.memorySize": {
+          "type": "number",
+          "maximum": 18446744073709552000,
+          "default": 18446744073709552000,
+          "description": "Memory size in bytes"
+        },
+        "riscv-debug-support.Memory.blockSize": {
+          "type": "number",
+          "default": 1024,
+          "description": "Memory size in bytes"
+        }
+      }
+    },
+    "breakpoints": [
+      {
+        "language": "riscv"
+      }
+    ],
+    "languages": [
+      {
+        "id": "riscv",
+        "aliases": [
+          "RISC-V Assembly",
+          "riscv"
+        ],
+        "extensions": [
+          ".s",
+          ".S"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "signatureHelp": [
+      {
+        "language": "riscv",
+        "signatures": [
+          {
+            "triggerCharacters": [
+              " "
+            ],
+            "retriggerCharacters": [
+              ","
+            ]
+          }
+        ]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "riscv",
+        "scopeName": "source.riscv",
+        "path": "./syntaxes/riscv.tmLanguage.json"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "riscvSimpleDebug",
+        "label": "Simple Debug",
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Absolute path to a .s file.",
+                "default": "${command:riscv-debug-support.riscvSimpleDebug.getProgramName}"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Automatically stop after launch.",
+                "default": true
+              }
+            }
+          }
+        },
+        "languages": [
+          "riscv"
+        ],
+        "initialConfigurations": [
+          {
+            "type": "riscvSimpleDebug",
+            "request": "launch",
+            "name": "Launch Program",
+            "program": "${command:riscv-debug-support.riscvSimpleDebug.getProgramName}",
+            "stopOnEntry": true
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "RISC-V Debug: Launch",
+            "description": "A launch configuration for debugging a simple program.",
+            "body": {
+              "type": "riscvSimpleDebug",
+              "request": "launch",
+              "name": "Launch Program",
+              "program": "${command:riscv-debug-support.riscvSimpleDebug.getProgramName}",
+              "stopOnEntry": true
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.9",
+    "@types/node": "20.x",
+    "@types/vscode": "^1.96.0",
+    "@typescript-eslint/eslint-plugin": "^8.10.0",
+    "@typescript-eslint/parser": "^8.7.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
+    "ajv": "^8.12.0",
+    "ajv-keywords": "^5.1.0",
+    "eslint": "^9.13.0",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.6.3",
+    "webpack": "^5.95.0",
+    "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "@vscode/debugadapter": "^1.68.0",
+    "@vscode/vsce": "^3.5.0"
+  }
+}
