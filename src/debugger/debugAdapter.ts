@@ -1,6 +1,6 @@
 import {
   DebugSession,
-  InitializedEvent, TerminatedEvent, StoppedEvent, BreakpointEvent, OutputEvent,
+  InitializedEvent, TerminatedEvent, StoppedEvent, BreakpointEvent, OutputEvent, InvalidatedEvent,
   Thread, StackFrame, Scope, Source, Handles, Breakpoint
 } from '@vscode/debugadapter';
 import { DebugProtocol } from '@vscode/debugprotocol';
@@ -15,6 +15,8 @@ import { getProgramCounterLabel, getInstructionsExecutedLabel } from './statusBa
 
 import { showMemoryDumpAsWebview } from '../views/showmemory';
 
+import { vmTerminal, terminal } from './vmTerminal';
+
 
 interface LaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
   program: string;
@@ -25,6 +27,7 @@ interface VmHandler {
   childProcess?: ChildProcess | null;
   isRunning(): boolean;
   startProcess(): void;
+  sendInput(input: string): void;
   vmExit(): void;
   vmLoad(filePath: string): void;
   vmRun(): void;
@@ -36,6 +39,7 @@ interface VmHandler {
   vmRemoveBreakpoint(line: number): void;
   vmDumpMemory(ranges: string): void;
   vmGetMemoryData(address: string): Promise<string>;
+  vmModifyRegister(register: string, value: string): Boolean;
   readStateJson(): { program_counter?: string; current_line?: number; current_instruction?: string; instructions_retired?: number; output_status?: string; breakpoints?: number[] };
   readRegistersJson(): { gp_registers?: any; fp_registers?: any; "control and status registers"?: any };
   readErrorsJson(): { errorCode?: number; errors?: { line: number; message: string }[] };
@@ -66,6 +70,7 @@ export class RiscvDebugSession extends DebugSession {
     response.body.supportsRestartRequest = true;
     response.body.supportTerminateDebuggee = true;
     response.body.supportsTerminateRequest = true;
+    response.body.supportsSetVariable = true;
 
     this.sendResponse(response);
     this.sendEvent(new InitializedEvent());
@@ -93,12 +98,12 @@ export class RiscvDebugSession extends DebugSession {
       let parseHandled = false;
       let programHandled = false;
 
-      this._vmHandler.childProcess?.stdout?.on('data', (data) => {
+      const onData = (data: Buffer) => {
         outputBuffer += data.toString();
 
         if (!parseHandled && outputBuffer.includes('VM_PARSE_ERROR')) {
           parseHandled = true;
-          this._vmHandler?.childProcess?.stdout?.removeAllListeners('data');
+          this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
           const errorsDump = this._vmHandler?.readErrorsJson();
           const diagnostic: vscode.Diagnostic[] = [];
           if (errorsDump && errorsDump.errors && errorsDump.errors.length > 0) {
@@ -140,7 +145,7 @@ export class RiscvDebugSession extends DebugSession {
             vscode.Uri.file(this._sourceFile),
             []
           );
-          this._vmHandler?.childProcess?.stdout?.removeAllListeners('data');
+          this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
           const state = this._vmHandler ? this._vmHandler.readStateJson() : {};
           if (state.current_line) {
             this._currentLine = state.current_line;
@@ -157,8 +162,9 @@ export class RiscvDebugSession extends DebugSession {
           this.sendResponse(response);
           return;
         }
+      };
 
-      });
+      this._vmHandler.childProcess?.stdout?.on('data', onData);
 
     } catch (error) {
       response.success = false;
@@ -166,7 +172,6 @@ export class RiscvDebugSession extends DebugSession {
       this.sendResponse(response);
     }
   }
-
 
   private updateCurrentLine(): void {
     if (this._vmHandler && this._vmHandler.isRunning()) {
@@ -202,7 +207,6 @@ export class RiscvDebugSession extends DebugSession {
     for (const line of breakpoints) {
       try {
         this._vmHandler.vmAddBreakpoint(line);
-        // console.log(`Restored breakpoint at line ${line}`);
       } catch (error) {
         this.sendEvent(new OutputEvent(`Failed to restore breakpoint at line ${line}: ${error}\n`));
       }
@@ -223,22 +227,12 @@ export class RiscvDebugSession extends DebugSession {
         confirmedBreakpoints.push(new Breakpoint(true, bp));
       }
 
-      // Optionally send updated breakpoints to the UI
-      // for (const bp of confirmedBreakpoints) {
-      //   this.sendEvent({
-      //     event: 'breakpoint',
-      //     body: { reason: 'changed', breakpoint: bp },
-      //     seq: 0,
-      //     type: 'event'
-      //   });
-      // }
     } catch (error) {
       this.sendEvent(new OutputEvent(`Failed to read VM state for breakpoints: ${error}\n`));
     }
 
 
   }
-
 
   protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
     const path = args.source.path;
@@ -275,7 +269,6 @@ export class RiscvDebugSession extends DebugSession {
 
           lineNumbers.push(line);
           breakpoints.push(new Breakpoint(true, line));
-          // this.sendEvent(new OutputEvent(`Breakpoint set at line ${line}\n`));
         } catch (error) {
           breakpoints.push(new Breakpoint(false, line));
           this.sendEvent(new OutputEvent(`Failed to set breakpoint at line ${line}: ${error}\n`));
@@ -340,7 +333,6 @@ export class RiscvDebugSession extends DebugSession {
     }
 
     try {
-      // Handle top-level VM state
       if (id === 'vmstate') {
         const state = this._vmHandler.readStateJson();
 
@@ -350,13 +342,6 @@ export class RiscvDebugSession extends DebugSession {
           value: (state.current_line || 0).toString(),
           variablesReference: 0
         });
-
-        // variables.push({
-        //   name: 'vmRunning',
-        //   type: 'boolean',
-        //   value: this._vmHandler.isRunning().toString(),
-        //   variablesReference: 0
-        // });
 
       } else if (id === 'registers') {
         variables.push(
@@ -395,7 +380,7 @@ export class RiscvDebugSession extends DebugSession {
               name: reg,
               type: 'register',
               value: value,
-              variablesReference: 0
+              variablesReference: 1
             });
           }
         }
@@ -413,19 +398,65 @@ export class RiscvDebugSession extends DebugSession {
     this.sendResponse(response);
   }
 
+  protected setVariableRequest(response: DebugProtocol.SetVariableResponse, args: DebugProtocol.SetVariableArguments): void {
+    const parent = this._variableHandles.get(args.variablesReference);
+
+    if (!this._vmHandler || !this._vmHandler.isRunning()) {
+      response.success = false;
+      response.message = 'VM is not running.';
+      return this.sendResponse(response);
+    }
+
+    const regName = args.name;
+    const newValue = args.value;
+
+    if (parent === 'gp_registers' || parent === 'fp_registers' || parent === 'csr_registers') {
+      if (regName === '0x0') {
+        response.success = false;
+        response.message = `Cannot modify register ${regName}.`;
+        this.sendResponse(response);
+        return;
+      }
+      const paddedValue = newValue.startsWith('0x')
+        ? '0x' + newValue.slice(2).padStart(16, '0')
+        : newValue;
+
+      try {
+        const success = this._vmHandler.vmModifyRegister(regName, paddedValue);
+
+        if (!success) {
+          response.success = false;
+          response.message = `Failed to update register ${regName}.`;
+        } else {
+          response.body = { value: paddedValue };
+          response.success = true;
+          this.sendEvent(new InvalidatedEvent(['variables']));
+
+        }
+      } catch (err) {
+        response.success = false;
+        response.message = `Error modifying register ${regName}: ${err instanceof Error ? err.message : String(err)}`;
+      }
+      return this.sendResponse(response);
+    }
+
+    response.success = false;
+    response.message = `Variable ${regName} is not editable in this context.`;
+    this.sendResponse(response);
+  }
+
   protected continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments): void {
     if (this._vmHandler && this._vmHandler.isRunning()) {
       this._vmHandler.vmDebugRun();
 
-      this._vmHandler?.childProcess?.stdout?.removeAllListeners('data');
       let outputBuffer = '';
 
-      this._vmHandler?.childProcess?.stdout?.on('data', (data) => {
+      const onData = (data: Buffer) => {
         outputBuffer += data.toString();
 
         if (this._vmHandler && this._vmHandler.isRunning()) {
           if (outputBuffer.includes('VM_BREAKPOINT_HIT')) {
-            this._vmHandler.childProcess?.stdout?.removeAllListeners('data');
+            this._vmHandler.childProcess?.stdout?.removeListener('data', onData);
             const state = this._vmHandler.readStateJson();
             if (state.current_line) {
               this._currentLine = state.current_line;
@@ -436,68 +467,113 @@ export class RiscvDebugSession extends DebugSession {
             this.sendResponse(response);
             return;
           } else if (outputBuffer.includes('VM_PROGRAM_END')) {
-            this._vmHandler.childProcess?.stdout?.removeAllListeners('data');
+            this._vmHandler.childProcess?.stdout?.removeListener('data', onData);
             this._vmHandler.vmExit();
             this.sendEvent(new TerminatedEvent());
             this.sendResponse(response);
             return;
+          } else if (outputBuffer.includes('VM_STDIN_START')) {
+
           }
         }
-      });
+      };
+
+      this._vmHandler?.childProcess?.stdout?.on('data', onData);
     }
   }
 
+
   protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
-    if (this._vmHandler && this._vmHandler.isRunning()) {
-      this._vmHandler.vmStep();
-
-      this._vmHandler?.childProcess?.stdout?.removeAllListeners('data');
-      let outputBuffer = '';
-
-      this._vmHandler?.childProcess?.stdout?.on('data', (data) => {
-        outputBuffer += data.toString();
-        if (this._vmHandler && this._vmHandler.isRunning()) {
-          if (outputBuffer.includes('VM_STEP_COMPLETED')) {
-            this._vmHandler.childProcess?.stdout?.removeAllListeners('data');
-            const state = this._vmHandler.readStateJson();
-            getProgramCounterLabel()!.text = `PC: ${state.program_counter ?? 0}`;
-            getInstructionsExecutedLabel()!.text = `Instructions: ${state.instructions_retired ?? 0}`;
-            // this.sendEvent(new OutputEvent(`Stepped to line ${this._currentLine}\n`));
-            this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
-            if (state.current_line) {
-              this._currentLine = state.current_line;
-            }
-            this.sendResponse(response);
-            return;
-          } else if (outputBuffer.includes('VM_LAST_INSTRUCTION_STEPPED')) {
-            this._vmHandler.childProcess?.stdout?.removeAllListeners('data');
-            const state = this._vmHandler.readStateJson();
-            // this.sendEvent(new OutputEvent(`Last instruction stepped at line ${this._currentLine}\n`));
-            this._currentLine = 0;
-            getProgramCounterLabel()!.text = `PC: ${state.program_counter ?? 0}`;
-            getInstructionsExecutedLabel()!.text = `Instructions: ${state.instructions_retired ?? 0}`;
-            this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
-            this.sendResponse(response);
-            return;
-          } else if (outputBuffer.includes('VM_PROGRAM_END')) {
-            this._vmHandler.childProcess?.stdout?.removeAllListeners('data');
-            this._vmHandler.vmExit();
-            this.sendEvent(new TerminatedEvent());
-            this.sendResponse(response);
-            return;
-          }
-        }
-      });
+    if (!this._vmHandler || !this._vmHandler.isRunning()) {
+      return this.sendResponse(response);
     }
+
+    this._vmHandler.vmStep();
+    let outputBuffer = '';
+    let waitingForInput = false;
+
+    const onData = (data: Buffer) => {
+      outputBuffer += data.toString();
+
+      // Extract and emit any VM_STDOUT blocks using regex
+      const stdoutRegex = /VM_STDOUT_START([\s\S]*?)VM_STDOUT_END/g;
+      let match;
+      while ((match = stdoutRegex.exec(outputBuffer)) !== null) {
+        const stdoutContent = match[1].trim();
+        console.log(`Stdout ecall output: ${stdoutContent}`);
+        vmTerminal.printToTerminal(stdoutContent);
+        this.sendEvent(new OutputEvent(stdoutContent + '\n'));
+      }
+
+      // Remove processed stdout blocks
+      outputBuffer = outputBuffer.replace(stdoutRegex, '');
+
+      // Handle STDIN
+      if (!waitingForInput && outputBuffer.includes('VM_STDIN_START')) {
+        waitingForInput = true;
+        outputBuffer = outputBuffer.replace('VM_STDIN_START', '');
+
+        terminal.show();
+        vmTerminal.readLine().then((line: string) => {
+          this._vmHandler?.sendInput('vm_stdin ' + line + '\n');
+        }
+        ).catch((err: Error) => {
+          console.error(`Error reading input: ${err.message}`);
+          vmTerminal.printToTerminal(`Error reading input: ${err.message}`);
+        });
+
+
+
+      }
+
+      // Handle end of stdin
+      if (waitingForInput && outputBuffer.includes('VM_STDIN_END')) {
+        waitingForInput = false;
+        outputBuffer = outputBuffer.replace('VM_STDIN_END', '');
+        this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
+      }
+
+      // Handle other VM messages
+      if (outputBuffer.includes('VM_STEP_COMPLETED')) {
+        this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
+        const state = this._vmHandler?.readStateJson();
+        getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
+        getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
+        this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
+        if (state?.current_line) {
+          this._currentLine = state?.current_line;
+        }
+        return this.sendResponse(response);
+      }
+
+      if (outputBuffer.includes('VM_LAST_INSTRUCTION_STEPPED')) {
+        this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
+        const state = this._vmHandler?.readStateJson();
+        this._currentLine = 0;
+        getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
+        getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
+        this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
+        return this.sendResponse(response);
+      }
+
+      if (outputBuffer.includes('VM_PROGRAM_END')) {
+        this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
+        this._vmHandler?.vmExit();
+        this.sendEvent(new TerminatedEvent());
+        return this.sendResponse(response);
+      }
+
+
+    };
+
+    this._vmHandler.childProcess?.stdout?.on('data', onData);
   }
 
   protected stepInRequest(response: DebugProtocol.StepInResponse, args: DebugProtocol.StepInArguments): void {
-    // For RISC-V assembly, step in is the same as step over
     this.nextRequest(response, args);
   }
 
   protected stepOutRequest(response: DebugProtocol.StepOutResponse, args: DebugProtocol.StepOutArguments): void {
-    // For RISC-V assembly, step out is the same as step over
     this.nextRequest(response, args);
   }
 
@@ -510,7 +586,6 @@ export class RiscvDebugSession extends DebugSession {
       }
       getProgramCounterLabel()!.text = `PC: ${state.program_counter ?? 0}`;
       getInstructionsExecutedLabel()!.text = `Instructions: ${state.instructions_retired ?? 0}`;
-      // this.sendEvent(new OutputEvent(`Stepped back to line ${this._currentLine}\n`));
       this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
     }
     this.sendResponse(response);
@@ -534,12 +609,11 @@ export class RiscvDebugSession extends DebugSession {
         let outputBuffer = '';
         let parseHandled = false;
         let programHandled = false;
-
-        this._vmHandler.childProcess?.stdout?.on('data', (data) => {
+        const onData = (data: Buffer) => {
           outputBuffer += data.toString();
           if (!parseHandled && outputBuffer.includes('VM_PARSE_ERROR')) {
             parseHandled = true;
-            this._vmHandler?.childProcess?.stdout?.removeAllListeners('data');
+            this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
             const errorsDump = this._vmHandler?.readErrorsJson();
             const diagnostic: vscode.Diagnostic[] = [];
             if (errorsDump && errorsDump.errors && errorsDump.errors.length > 0) {
@@ -569,7 +643,7 @@ export class RiscvDebugSession extends DebugSession {
               vscode.Uri.file(this._sourceFile),
               []
             );
-            this._vmHandler?.childProcess?.stdout?.removeAllListeners('data');
+            this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
             const state = this._vmHandler ? this._vmHandler.readStateJson() : {};
             if (state.current_line) {
               this._currentLine = state.current_line;
@@ -583,7 +657,9 @@ export class RiscvDebugSession extends DebugSession {
             this.sendResponse(response);
             return;
           }
-        });
+        };
+
+        this._vmHandler.childProcess?.stdout?.on('data', onData);
 
       } catch (error) {
         response.success = false;
@@ -678,13 +754,12 @@ export class RiscvDebugSession extends DebugSession {
 
     for (const segment of segments) {
       if (segment.includes('-')) {
-        // Format: start-end
         const [startStr, endStr] = segment.split('-');
         const start = parseInt(startStr.trim(), 16);
         const end = parseInt(endStr.trim(), 16);
         let length = end - start + 1;
         if (length % 8 !== 0) {
-          length += 8 - (length % 8); // Round up to the next multiple of 8
+          length += 8 - (length % 8);
         }
         length = length / 8;
 
@@ -696,14 +771,13 @@ export class RiscvDebugSession extends DebugSession {
         }
         ranges.push([startStr.trim(), lengthStr.trim()]);
       } else if (segment.includes('+')) {
-        // Format: start+length
         const [startStr, lengthStr] = segment.split('+');
         const start = parseInt(startStr.trim(), 16);
         let length = parseInt(lengthStr.trim(), 10);
         if (length % 8 !== 0) {
-          length += 8 - (length % 8); // Round up to the next multiple of 8
+          length += 8 - (length % 8);
         }
-        length = length / 8; // Convert to 8-byte units
+        length = length / 8;
 
         if (isNaN(start) || isNaN(length) || length <= 0) {
           throw new Error(`Invalid offset+length: ${segment}`);
@@ -738,13 +812,13 @@ export class RiscvDebugSession extends DebugSession {
 
       this._vmHandler.vmDumpMemory(rangesInput);
 
-      this._vmHandler?.childProcess?.stdout?.removeAllListeners('data');
       let outputBuffer = '';
-      this._vmHandler?.childProcess?.stdout?.on('data', (data) => {
+
+      const onData = (data: Buffer) => {
         outputBuffer += data.toString();
 
         if (outputBuffer.includes('VM_MEMORY_DUMPED')) {
-          this._vmHandler?.childProcess?.stdout?.removeAllListeners('data');
+          this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
           const memoryDump = this._vmHandler?.readMemoryJson();
           if (memoryDump) {
             showMemoryDumpAsWebview(memoryDump);
@@ -755,12 +829,14 @@ export class RiscvDebugSession extends DebugSession {
             this.sendEvent(new OutputEvent(`Failed to read memory dump from VM\n`));
           }
         } else if (outputBuffer.includes('VM_MEMORY_DUMP_ERROR')) {
-          this._vmHandler?.childProcess?.stdout?.removeAllListeners('data');
+          this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
           response.success = false;
           response.message = "Error during memory dump";
           this.sendEvent(new OutputEvent(`Error during memory dump: ${outputBuffer}\n`));
         }
-      });
+      };
+
+      this._vmHandler?.childProcess?.stdout?.on('data', onData);
 
       response.body = { success: true };
       this.sendResponse(response);
@@ -770,14 +846,4 @@ export class RiscvDebugSession extends DebugSession {
   }
 
 
-
-}
-
-function showMemoryDumpAsText(memoryData: string) {
-  const uri = vscode.Uri.parse('memorydump:Memory Dump');
-
-  vscode.workspace.openTextDocument({ content: memoryData, language: 'plaintext' })
-    .then(doc => {
-      vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
-    });
 }

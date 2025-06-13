@@ -5,12 +5,14 @@ import { RiscvDebugSession } from './debugger/debugAdapter';
 import { lintDocument, validateISA, diagnosticCollection } from './riscvLinter';
 import { signatureProvider } from './riscvSignature';
 import { vmBinaryPath } from './config';
-import path from 'path';
-import fs from 'fs';
 
 import { completionProvider } from './riscvCompletion';
 
-const vmHandlerInstance = new vmHandler(vmBinaryPath, ['--start-vm']);
+import { terminal, VmTerminal } from './debugger/vmTerminal';
+
+
+
+const vmHandlerInstance = new vmHandler(vmBinaryPath, ['--vm-as-backend', '--start-vm']);
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -143,7 +145,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!rangePattern.test(value)) {
           return "Invalid format. Use '0x1000-0x10FF' or '0x10FF+25'.";
         }
-        return null; // No error
+        return null; 
       },
       ignoreFocusOut: true,
       placeHolder: "e.g. 0x2000-0x20FF;0x20FF+25;..."
@@ -154,6 +156,23 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
+
+
+  //================================================================================================
+  // context.subscriptions.push(
+  //   vscode.commands.registerCommand('riscv-debug-support.openTerminal', () => {
+  //     const pty = new VmTerminal();
+  //     const terminal = vscode.window.createTerminal({ name: 'RISC-V VM', pty });
+  //     terminal.show();
+  //   })
+  // );
+
+  // const terminal = vscode.window.createTerminal({
+  //   name: 'RISC-V VM',
+  //   pty: vmTerminal
+  // });
+  terminal.show();
+  
 
 
 

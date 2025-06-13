@@ -86,7 +86,7 @@ function getWebviewHtml(memoryDump: Record<string, string>): string {
 
     function formatBytes(hex64) {
       const hex = hex64.startsWith("0x") ? hex64.slice(2) : hex64;
-      const padded = hex.padStart(16, '0'); // Ensure 64-bit
+      const padded = hex.padStart(16, '0');
       const bytes = padded.match(/.{2}/g);
       return bytes.reverse().join(' ');
     }

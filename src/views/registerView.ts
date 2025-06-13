@@ -76,7 +76,6 @@ class RegisterProvider {
 
     getChildren(element: GroupItem | undefined): Promise<vscode.TreeItem[]> {
         if (!element) {
-            // Return top-level groups
             return Promise.resolve([
                 new GroupItem('General Purpose Registers', this.generalPurposeRegisters),
                 new GroupItem('Floating Point Registers', this.floatingPointRegisters),

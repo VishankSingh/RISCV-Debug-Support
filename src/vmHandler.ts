@@ -61,10 +61,11 @@ class vmHandler {
     return new Promise<void>((resolve) => {
       this.childProcess.stdout.on('data', (data: Buffer) => {
         const output: string = data.toString();
+        console.log(`stdout: ${output}`);
 
         if (output.includes('VM_STARTED')) {
           this.isVmRunning = true;
-          resolve(); // <- resolves the outer Promise
+          resolve();
         }
       });
 
@@ -121,11 +122,20 @@ class vmHandler {
 
   vmDebugRun(): void {
     if (this.childProcess) {
-      this.sendInput('debug');
+      this.sendInput('run_debug');
     } else {
       console.error('Child process is not running. Start the process first.');
     }
   }
+
+  vmStop(): void {
+    if (this.childProcess) {
+      this.sendInput('stop');
+    } else {
+      console.error('Child process is not running. Start the process first.');
+    }
+  }
+
   vmStep(): void {
     if (this.isRunning()) {
       this.sendInput('step');
@@ -186,32 +196,49 @@ class vmHandler {
     return new Promise((resolve, reject) => {
       if (this.childProcess) {
         this.sendInput(`get_mem_point ${address}`);
-  
+
         const onData = (data: Buffer) => {
           const output: string = data.toString();
           const match = output.match(/\[(.*?)\]/);
           if (match) {
             const memoryData = match[1];
-            this.childProcess.stdout.removeListener('data', onData); // Remove this listener only
+            this.childProcess.stdout.removeListener('data', onData);
             resolve(memoryData);
           }
         };
-  
+
         this.childProcess.stdout.on('data', onData);
       } else {
         reject(new Error('Child process is not running. Start the process first.'));
       }
     });
   }
-  
+
+  vmModifyRegister(register: string, value: string): Boolean {
+    if (this.childProcess) {
+      this.sendInput(`modify_register ${register} ${value}`);
+
+      const onData = (data: Buffer) => {
+        const output: string = data.toString();
+        if (output.includes('VM_MODIFY_REGISTER_SUCCESS')) {
+          this.childProcess.stdout.removeListener('data', onData);
+          return true;
+        } else if (output.includes('VM_MODIFY_REGISTER_FAILURE')) {
+          this.childProcess.stdout.removeListener('data', onData);
+          return false;
+        }
+      };
+
+      this.childProcess.stdout.on('data', onData);
+    } else {
+      console.error('Child process is not running. Start the process first.');
+      return false;
+    }
+    return true;
+  }
+
 
 
 }
 
 export default vmHandler;
-// Usage example:
-// const vmHandler = require('./vmHandler');
-// const vm = new vmHandler('/path/to/vm/binary');
-// vm.startProcess();
-// vm.sendInput('some command');
-// vm.stopProcess();
