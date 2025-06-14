@@ -3,6 +3,7 @@
 ## Features  
 
 - Support for RISC-V 64 IMFD and Zicsr(fflags, frm, fcsr) instructions
+- Syscall support for `read (63)`, `write (64)`. (Currently only supporting stdin and stdout)
 - Debug support with  
         - Breakpoint  
         - Single Step  

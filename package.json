@@ -2,10 +2,14 @@
   "name": "riscv-debug-support",
   "displayName": "RISC-V Debug Support",
   "description": "",
-  "version": "0.0.9",
+  "version": "0.0.11",
   "publisher": "Vishank",
   "engines": {
     "vscode": "^1.96.0"
+  },
+  "galleryBanner": {
+    "color": "#5c5c5c",
+    "theme": "dark"
   },
   "categories": [
     "Programming Languages",

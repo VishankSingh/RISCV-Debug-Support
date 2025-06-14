@@ -41,11 +41,13 @@ class TerminalManager {
 
   public print(message: string): void {
     this.ensureTerminal();
+    this.terminalInstance?.show();
     this.vmInstance?.printToTerminal(message);
   }
 
   public async read(): Promise<string> {
     this.ensureTerminal();
+    this.terminalInstance?.show();
     return await this.vmInstance!.readLine();
   }
 

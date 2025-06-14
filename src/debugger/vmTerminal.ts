@@ -9,15 +9,21 @@ class VmTerminal implements vscode.Pseudoterminal {
 
   private history: string[] = [];
   private historyIndex: number = -1;
+  private isReady = false;
 
 
   private inputBuffer = '';
   private inputResolvers: ((line: string) => void)[] = [];
-
+  private pendingOutput: string[] = [];
 
   open(_: vscode.TerminalDimensions | undefined): void {
     // this.writeEmitter.fire('Welcome to the custom VM terminal!\r\n> ');
     this.writeEmitter.fire('RISC-V VM Terminal\r\n=> ');
+    this.isReady = true;
+    while (this.pendingOutput.length > 0) {
+      this.writeEmitter.fire(this.pendingOutput.shift()!);
+    }
+  
   }
 
   close(): void {
@@ -84,13 +90,14 @@ class VmTerminal implements vscode.Pseudoterminal {
 
 
   printToTerminal(message: string): void {
-    this.writeEmitter.fire('\r'); 
-    this.writeEmitter.fire(message + '\r\n');
-
-    if (this.inputResolvers.length === 0) {
-      this.writeEmitter.fire('=> '); // Prompt for next input
+    const text = '\x1b[2K\r' + message + '\r\n' + (this.inputResolvers.length === 0 ? '=> ' : '');
+    if (this.isReady) {
+      this.writeEmitter.fire(text);
+    } else {
+      this.pendingOutput.push(text);
     }
   }
+  
 
   readLine(): Promise<string> {
     return new Promise((resolve) => {
