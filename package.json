@@ -2,7 +2,7 @@
   "name": "riscv-debug-support",
   "displayName": "RISC-V Debug Support",
   "description": "",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "publisher": "Vishank",
   "engines": {
     "vscode": "^1.96.0"
