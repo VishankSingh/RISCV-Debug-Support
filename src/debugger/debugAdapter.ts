@@ -15,7 +15,8 @@ import { getProgramCounterLabel, getInstructionsExecutedLabel } from './statusBa
 
 import { showMemoryDumpAsWebview } from '../views/showmemory';
 
-import { vmTerminal, terminal } from './vmTerminal';
+import { terminalManager } from './terminalManager';
+
 
 
 interface LaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
@@ -501,7 +502,8 @@ export class RiscvDebugSession extends DebugSession {
       while ((match = stdoutRegex.exec(outputBuffer)) !== null) {
         const stdoutContent = match[1].trim();
         console.log(`Stdout ecall output: ${stdoutContent}`);
-        vmTerminal.printToTerminal(stdoutContent);
+        // vmTerminal.printToTerminal(stdoutContent);
+        terminalManager.print(stdoutContent);
         this.sendEvent(new OutputEvent(stdoutContent + '\n'));
       }
 
@@ -513,13 +515,12 @@ export class RiscvDebugSession extends DebugSession {
         waitingForInput = true;
         outputBuffer = outputBuffer.replace('VM_STDIN_START', '');
 
-        terminal.show();
-        vmTerminal.readLine().then((line: string) => {
+        terminalManager.read().then((line: string) => {
           this._vmHandler?.sendInput('vm_stdin ' + line + '\n');
         }
         ).catch((err: Error) => {
           console.error(`Error reading input: ${err.message}`);
-          vmTerminal.printToTerminal(`Error reading input: ${err.message}`);
+          terminalManager.print(`Error reading input: ${err.message}`);
         });
 
 

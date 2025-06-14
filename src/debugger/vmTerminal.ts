@@ -105,8 +105,5 @@ class VmTerminal implements vscode.Pseudoterminal {
 }
 
 
-const vmTerminal = new VmTerminal();
-const terminal = vscode.window.createTerminal({ name: 'RISC-V VM', pty: vmTerminal });
 
-
-export { vmTerminal, VmTerminal, terminal };
+export { VmTerminal };

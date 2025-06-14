@@ -15,3 +15,9 @@ All notable changes to this project will be documented in this file.
 - Added support for `Register` variables change  
 - Basic Linux syscalls `read (63)` and `write (64)` are now supported  
 - Basic terminal emulator support is added
+
+## [0.0.9] - 2025-15-06
+
+### Added
+
+- Better terminal emulator support  

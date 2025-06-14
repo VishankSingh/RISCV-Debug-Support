@@ -8,7 +8,6 @@ import { vmBinaryPath } from './config';
 
 import { completionProvider } from './riscvCompletion';
 
-import { terminal, VmTerminal } from './debugger/vmTerminal';
 
 
 
@@ -171,7 +170,7 @@ export function activate(context: vscode.ExtensionContext) {
   //   name: 'RISC-V VM',
   //   pty: vmTerminal
   // });
-  terminal.show();
+  // terminal.show();
   
 
 
