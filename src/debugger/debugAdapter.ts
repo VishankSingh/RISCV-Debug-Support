@@ -459,11 +459,9 @@ export class RiscvDebugSession extends DebugSession {
         const stdoutRegex = /VM_STDOUT_START([\s\S]*?)VM_STDOUT_END/g;
         let match;
         while ((match = stdoutRegex.exec(outputBuffer)) !== null) {
-          const stdoutContent = match[1].trim();
+          const stdoutContent = match[1];
           console.log(`Stdout ecall output: ${stdoutContent}`);
-          // vmTerminal.printToTerminal(stdoutContent);
           terminalManager.print(stdoutContent);
-          this.sendEvent(new OutputEvent(stdoutContent + '\n'));
         }
 
         outputBuffer = outputBuffer.replace(stdoutRegex, '');
@@ -474,7 +472,7 @@ export class RiscvDebugSession extends DebugSession {
           outputBuffer = outputBuffer.replace('VM_STDIN_START', '');
 
           terminalManager.read().then((line: string) => {
-            this._vmHandler?.sendInput('vm_stdin ' + line + '\n');
+            this._vmHandler?.sendInput('vm_stdin \"' + line + '\"\n');
           }
           ).catch((err: Error) => {
             console.error(`Error reading input: ${err.message}`);
@@ -490,7 +488,6 @@ export class RiscvDebugSession extends DebugSession {
         }
 
         if (outputBuffer.includes('VM_STEP_COMPLETED')) {
-          this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
           const state = this._vmHandler?.readStateJson();
           getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
           getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
@@ -498,17 +495,14 @@ export class RiscvDebugSession extends DebugSession {
           if (state?.current_line) {
             this._currentLine = state?.current_line;
           }
-          this.sendResponse(response);
         }
   
         if (outputBuffer.includes('VM_LAST_INSTRUCTION_STEPPED')) {
-          this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
           const state = this._vmHandler?.readStateJson();
           this._currentLine = 0;
           getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
           getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
           this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
-          this.sendResponse(response);
         }
 
         if (outputBuffer.includes('VM_BREAKPOINT_HIT')) {
@@ -555,8 +549,9 @@ export class RiscvDebugSession extends DebugSession {
       const stdoutRegex = /VM_STDOUT_START([\s\S]*?)VM_STDOUT_END/g;
       let match;
       while ((match = stdoutRegex.exec(outputBuffer)) !== null) {
-        const stdoutContent = match[1].trim();
+        const stdoutContent = match[1];
         terminalManager.print(stdoutContent);
+        console.log(`Stdout ecall output: ${stdoutContent}`);
         // this.sendEvent(new OutputEvent(stdoutContent + '\n'));
       }
 

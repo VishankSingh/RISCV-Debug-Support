@@ -10,6 +10,7 @@ class VmTerminal implements vscode.Pseudoterminal {
   private history: string[] = [];
   private historyIndex: number = -1;
   private isReady = false;
+  private lastPrintedEndedWithNewline = true;
 
 
   private inputBuffer = '';
@@ -23,7 +24,7 @@ class VmTerminal implements vscode.Pseudoterminal {
     while (this.pendingOutput.length > 0) {
       this.writeEmitter.fire(this.pendingOutput.shift()!);
     }
-  
+
   }
 
   close(): void {
@@ -45,7 +46,8 @@ class VmTerminal implements vscode.Pseudoterminal {
       this.inputBuffer = '';
 
       // Clear line and show only user input
-      this.writeEmitter.fire('\x1b[2K\r' + line + '\r\n');
+      // this.writeEmitter.fire('' + line + '\r\n');
+      this.writeEmitter.fire('\r\n');
 
       if (line.trim() !== '') {
         this.history.push(line);
@@ -86,27 +88,50 @@ class VmTerminal implements vscode.Pseudoterminal {
     }
   }
 
-
-
-
   printToTerminal(message: string): void {
-    const text = '\x1b[2K\r' + message + '\r\n' + (this.inputResolvers.length === 0 ? '=> ' : '');
-    if (this.isReady) {
-      this.writeEmitter.fire(text);
-    } else {
-      this.pendingOutput.push(text);
+
+    for (const char of message) {
+      if (char === '\n') {
+        this.lastPrintedEndedWithNewline = true;
+        if (this.isReady) {
+          this.writeEmitter.fire('\r\n');
+        } else {
+          this.pendingOutput.push('\r\n');
+        }
+      } else {
+        this.lastPrintedEndedWithNewline = false;
+        if (this.isReady) {
+          this.writeEmitter.fire(char);
+        } else {
+          this.pendingOutput.push(char);
+        }
+      }
     }
+
+    // if (this.inputResolvers.length === 0) {
+    //   if (this.isReady) {
+    //     this.writeEmitter.fire('=> ');
+    //   } else {
+    //     this.pendingOutput.push('=> ');
+    //   }
+    // }
   }
-  
+
 
   readLine(): Promise<string> {
     return new Promise((resolve) => {
       this.inputResolvers.push(resolve);
+
       if (this.inputResolvers.length === 1) {
-        this.writeEmitter.fire('\r=> ');
+        if (!this.lastPrintedEndedWithNewline) {
+          this.writeEmitter.fire('\r\n');
+        }
+        this.writeEmitter.fire('=> ');
+        this.lastPrintedEndedWithNewline = false;
       }
     });
   }
+
 
 
 }
