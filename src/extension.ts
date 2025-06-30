@@ -17,6 +17,32 @@ const vmHandlerInstance = new vmHandler(vmBinaryPath, ['--vm-as-backend', '--sta
 export function activate(context: vscode.ExtensionContext) {
   console.log('Congratulations, your extension "riscv-debug-support" is now active!');
 
+  function yourFunction(newValue: any) {
+    console.log('New setting value:', newValue);
+  };
+
+  const disposable = vscode.workspace.onDidChangeConfiguration((event) => {
+    if (event.affectsConfiguration('riscv-debug-support.Execution.runStepDelay')) {
+      const newValue = vscode.workspace.getConfiguration('riscv-debug-support').get('Execution.runStepDelay');
+      if (vmHandlerInstance.isRunning()) {
+        vmHandlerInstance.sendInput(`modify_config Execution run_step_delay ${newValue}`);
+      }
+      yourFunction(newValue);
+    }
+    if (event.affectsConfiguration('riscv-debug-support.Memory.dataSectionStart')) {
+      const newValue = vscode.workspace.getConfiguration('riscv-debug-support').get('Memory.dataSectionStart');
+      if (vmHandlerInstance.isRunning()) {
+        vmHandlerInstance.sendInput(`modify_config Memory data_section_start ${newValue}`);
+      }
+      yourFunction(newValue);
+    }
+  });
+
+  context.subscriptions.push(disposable);
+
+
+
+
   createProgramCounterLabel();
   context.subscriptions.push(getProgramCounterLabel()!);
 
@@ -144,7 +170,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!rangePattern.test(value)) {
           return "Invalid format. Use '0x1000-0x10FF' or '0x10FF+25'.";
         }
-        return null; 
+        return null;
       },
       ignoreFocusOut: true,
       placeHolder: "e.g. 0x2000-0x20FF;0x20FF+25;..."
@@ -171,7 +197,7 @@ export function activate(context: vscode.ExtensionContext) {
   //   pty: vmTerminal
   // });
   // terminal.show();
-  
+
 
 
 

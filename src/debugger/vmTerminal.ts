@@ -1,5 +1,19 @@
 import * as vscode from 'vscode';
 
+// const { version } = require('../package.json');
+
+const ANSI = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  cyan: '\x1b[36m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  red: '\x1b[31m',
+  gray: '\x1b[90m',
+  clearLine: '\x1b[2K\r',
+};
+
+
 class VmTerminal implements vscode.Pseudoterminal {
   private writeEmitter = new vscode.EventEmitter<string>();
   onDidWrite: vscode.Event<string> = this.writeEmitter.event;
@@ -17,13 +31,61 @@ class VmTerminal implements vscode.Pseudoterminal {
   private inputResolvers: ((line: string) => void)[] = [];
   private pendingOutput: string[] = [];
 
+  private static readonly PROMPT = `${ANSI.green}=> ${ANSI.reset}`;
+
+
   open(_: vscode.TerminalDimensions | undefined): void {
-    // this.writeEmitter.fire('Welcome to the custom VM terminal!\r\n> ');
-    this.writeEmitter.fire('RISC-V VM Terminal\r\n=> ');
+    const banner = [
+      `${ANSI.cyan}`,
+      '                       .',
+      '                       M',
+      '                      dM',
+      '                      MMr',
+      '                     4MMML                  .',
+      '                     MMMMM.                xf',
+      '     .              "MMMMM               .MM-',
+      '      Mh..          +MMMMMM            .MMMM',
+      '      .MMM.         .MMMMML.          MMMMMh',
+      '       )MMMh.        MMMMMM         MMMMMMM',
+      '        3MMMMx.     \'MMMMMMf      xnMMMMMM"',
+      '        \'*MMMMM      MMMMMM.     nMMMMMMP"',
+      '          *MMMMMx    "MMMMM\\    .MMMMMMM=',
+      '           *MMMMMh   "MMMMM"   JMMMMMMP',
+      '             MMMMMM   3MMMM.  dMMMMMM            .',
+      '              MMMMMM  "MMMM  .MMMMM(        .nnMP"',
+      '  =..          *MMMMx  MMM"  dMMMM"    .nnMMMMM*"',
+      '    "MMn...     \'MMMMr \'MM   MMM"   .nMMMMMMM*"',
+      '     "4MMMMnn..   *MMM  MM  MMP"  .dMMMMMMM""',
+      '       ^MMMMMMMMx.  *ML "M .M*  .MMMMMM**"',
+      '          *PMMMMMMhn. *x > M  .MMMM**""',
+      '             ""**MMMMhx/.h/ .=*"',
+      '                      .3P"%....',
+      '                    nP"     "*MMnx               ',
+      '',
+      // `${ANSI.reset}`,
+      `${ANSI.yellow}RISC-V VM Terminal v0.0.18${ANSI.reset}`,
+      // `${ANSI.yellow}Author:${ANSI.reset}    Vishank Singh, https://github.com/VishankSingh`,
+      // `${ANSI.yellow}Docs:${ANSI.reset}      https://example.com/docs`,
+      `${ANSI.yellow}[Virtual machine src]${ANSI.reset} https://github.com/VishankSingh/riscv-simulator-2`,
+      `${ANSI.yellow}[VSCode Extension src]${ANSI.reset} https://github.com/VishankSingh/RISCV-Debug-Support`,
+      '',
+      // `${ANSI.green}Type 'help' to get started.${ANSI.reset}`,
+      `${ANSI.green}Press ↑↓ to browse history.${ANSI.reset}`,
+      '',
+
+    ].join('\r\n');
+
+
+
+    // this.writeEmitter.fire('RISC-V VM Terminal\r\n=> ');
+    this.writeEmitter.fire(banner);
     this.isReady = true;
     while (this.pendingOutput.length > 0) {
       this.writeEmitter.fire(this.pendingOutput.shift()!);
     }
+
+    this.writeEmitter.fire(VmTerminal.PROMPT);
+
 
   }
 
@@ -32,9 +94,11 @@ class VmTerminal implements vscode.Pseudoterminal {
   }
 
   private replaceCurrentLine(text: string) {
-    this.writeEmitter.fire('\x1b[2K\r'); // Clear entire line
+    this.writeEmitter.fire(ANSI.clearLine);
     this.inputBuffer = text;
-    this.writeEmitter.fire('=> ' + text);
+    // this.writeEmitter.fire('=> ' + text);
+    this.writeEmitter.fire(VmTerminal.PROMPT + text);
+
   }
 
 
@@ -53,6 +117,19 @@ class VmTerminal implements vscode.Pseudoterminal {
         this.history.push(line);
         this.historyIndex = this.history.length;
       }
+      // if (line.trim() === 'clear') {
+      //   this.writeEmitter.fire('\x1b[2J\x1b[0f'); // Clear screen
+      //   this.writeEmitter.fire('RISC-V VM Terminal\r\n=> ');
+      //   this.inputBuffer = '';
+      //   this.lastPrintedEndedWithNewline = false;
+      //   return;
+      // }
+
+      // if (this.inputResolvers.length > 0) {
+      //   const resolve = this.inputResolvers.shift();
+      //   resolve?.(line);
+      // }
+
 
       if (this.inputResolvers.length > 0) {
         const resolve = this.inputResolvers.shift();
@@ -60,22 +137,24 @@ class VmTerminal implements vscode.Pseudoterminal {
       }
 
       if (this.inputResolvers.length === 0) {
-        this.writeEmitter.fire('=> ');
+        // this.writeEmitter.fire('=> ');
+        this.writeEmitter.fire(VmTerminal.PROMPT);
+
       }
 
-    } else if (data === '\x7f') {
+    } else if (data === '\x7f') { // Handle backspace
       if (this.inputBuffer.length > 0) {
         this.inputBuffer = this.inputBuffer.slice(0, -1);
         this.writeEmitter.fire('\b \b');
       }
 
-    } else if (data === '\x1b[A') {
+    } else if (data === '\x1b[A') { // Handle up arrow
       if (this.history.length > 0) {
         this.historyIndex = Math.max(0, this.historyIndex - 1);
         this.replaceCurrentLine(this.history[this.historyIndex]);
       }
 
-    } else if (data === '\x1b[B') {
+    } else if (data === '\x1b[B') { // Handle down arrow
       if (this.history.length > 0) {
         this.historyIndex = Math.min(this.history.length, this.historyIndex + 1);
         const next = this.historyIndex < this.history.length ? this.history[this.historyIndex] : '';
@@ -91,20 +170,12 @@ class VmTerminal implements vscode.Pseudoterminal {
   printToTerminal(message: string): void {
 
     for (const char of message) {
-      if (char === '\n') {
-        this.lastPrintedEndedWithNewline = true;
-        if (this.isReady) {
-          this.writeEmitter.fire('\r\n');
-        } else {
-          this.pendingOutput.push('\r\n');
-        }
+      const toWrite = (char === '\n') ? '\r\n' : char;
+      this.lastPrintedEndedWithNewline = (char === '\n');
+      if (this.isReady) {
+        this.writeEmitter.fire(toWrite);
       } else {
-        this.lastPrintedEndedWithNewline = false;
-        if (this.isReady) {
-          this.writeEmitter.fire(char);
-        } else {
-          this.pendingOutput.push(char);
-        }
+        this.pendingOutput.push(toWrite);
       }
     }
 
@@ -126,7 +197,8 @@ class VmTerminal implements vscode.Pseudoterminal {
         if (!this.lastPrintedEndedWithNewline) {
           this.writeEmitter.fire('\r\n');
         }
-        this.writeEmitter.fire('=> ');
+        // this.writeEmitter.fire('=> ');
+        this.writeEmitter.fire(VmTerminal.PROMPT);
         this.lastPrintedEndedWithNewline = false;
       }
     });

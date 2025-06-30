@@ -2,7 +2,7 @@
   "name": "riscv-debug-support",
   "displayName": "RISC-V Debug Support",
   "description": "",
-  "version": "0.0.12",
+  "version": "0.0.18",
   "publisher": "Vishank",
   "engines": {
     "vscode": "^1.96.0"
@@ -67,17 +67,30 @@
           "default": "",
           "description": "Path to the VM binary executable"
         },
-        
+        "riscv-debug-support.Memory.dataSectionStart": {
+          "type": "string",
+          "default": "0x10000000",
+          "pattern": "^0x[0-9a-fA-F]+$",
+          "description": "Memory size in bytes"
+        },
+
         "riscv-debug-support.Memory.memorySize": {
-          "type": "number",
-          "maximum": 18446744073709552000,
-          "default": 18446744073709552000,
+          "type": "string",
+          "default": "0xffffffffffffffff",
+          "pattern": "^0x[0-9a-fA-F]+$",
           "description": "Memory size in bytes"
         },
         "riscv-debug-support.Memory.blockSize": {
           "type": "number",
           "default": 1024,
-          "description": "Memory size in bytes"
+          "minimum": 1,
+          "description": "Memory block size in bytes"
+        },
+        "riscv-debug-support.Execution.runStepDelay": {
+          "type": "number",
+          "default": 200,
+          "minimum": 1,
+          "description": "Delay in milliseconds between each step execution during run"
         }
       }
     },
@@ -185,6 +198,7 @@
     "test": "vscode-test"
   },
   "devDependencies": {
+    "@types/ini": "^4.1.1",
     "@types/mocha": "^10.0.9",
     "@types/node": "20.x",
     "@types/vscode": "^1.96.0",
@@ -202,6 +216,7 @@
   },
   "dependencies": {
     "@vscode/debugadapter": "^1.68.0",
-    "@vscode/vsce": "^3.5.0"
+    "@vscode/vsce": "^3.5.0",
+    "ini": "^5.0.0"
   }
 }

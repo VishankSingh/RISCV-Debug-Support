@@ -1,6 +1,7 @@
 import {
   DebugSession,
-  InitializedEvent, TerminatedEvent, StoppedEvent, BreakpointEvent, OutputEvent, InvalidatedEvent,
+  InitializedEvent, TerminatedEvent, StoppedEvent, BreakpointEvent, OutputEvent,
+  InvalidatedEvent, ContinuedEvent, ProgressUpdateEvent,
   Thread, StackFrame, Scope, Source, Handles, Breakpoint
 } from '@vscode/debugadapter';
 import { DebugProtocol } from '@vscode/debugprotocol';
@@ -13,7 +14,7 @@ import { diagnosticCollection } from '../riscvLinter';
 
 import { getProgramCounterLabel, getInstructionsExecutedLabel } from './statusBar';
 
-import { showMemoryDumpAsWebview } from '../views/showmemory';
+import { showMemoryDumpAsWebview } from '../views/showMemory';
 
 import { terminalManager } from './terminalManager';
 
@@ -54,6 +55,9 @@ export class RiscvDebugSession extends DebugSession {
   private _sourceFile: string = '';
   private _breakpoints = new Map<string, number[]>();
   private _vmHandler: VmHandler | null = null;
+  private waitingForInput: Boolean = false;
+
+  private isRunningContinue: Boolean = false;
 
   public constructor(vmHandler?: VmHandler) {
     super();
@@ -449,40 +453,55 @@ export class RiscvDebugSession extends DebugSession {
   protected continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments): void {
     if (this._vmHandler && this._vmHandler.isRunning()) {
       this._vmHandler.vmDebugRun();
+      this.isRunningContinue = true;
+      this.sendEvent(new ContinuedEvent(RiscvDebugSession.THREAD_ID));
 
       let outputBuffer = '';
-      let waitingForInput = false;
 
       const onData = (data: Buffer) => {
+        if (!this.isRunningContinue) {
+          this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
+          return;
+        }
         outputBuffer += data.toString();
 
         const stdoutRegex = /VM_STDOUT_START([\s\S]*?)VM_STDOUT_END/g;
         let match;
         while ((match = stdoutRegex.exec(outputBuffer)) !== null) {
+          const fullMatch = match[0];
           const stdoutContent = match[1];
-          console.log(`Stdout ecall output: ${stdoutContent}`);
+
           terminalManager.print(stdoutContent);
+          outputBuffer = outputBuffer.replace(fullMatch, '');
+          stdoutRegex.lastIndex = 0;
         }
+        // outputBuffer = outputBuffer.replace(stdoutRegex, '');
 
-        outputBuffer = outputBuffer.replace(stdoutRegex, '');
-
-        // Handle STDIN
-        if (!waitingForInput && outputBuffer.includes('VM_STDIN_START')) {
-          waitingForInput = true;
+        if (!this.waitingForInput && outputBuffer.includes('VM_STDIN_START')) {
+          this.waitingForInput = true;
+          this.sendEvent(new OutputEvent('[VM] Waiting for input\n'));
           outputBuffer = outputBuffer.replace('VM_STDIN_START', '');
+          const state = this._vmHandler?.readStateJson();
+          getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
+          getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
+          if (state?.current_line) {
+            this._currentLine = state?.current_line;
+          }
+          this.sendEvent(new StoppedEvent('pause', RiscvDebugSession.THREAD_ID));
 
           terminalManager.read().then((line: string) => {
             this._vmHandler?.sendInput('vm_stdin \"' + line + '\"\n');
-          }
-          ).catch((err: Error) => {
-            console.error(`Error reading input: ${err.message}`);
-            terminalManager.print(`Error reading input: ${err.message}`);
-          });
+            this.waitingForInput = false;
+          })
+            .catch((err: Error) => {
+              console.error(`Error reading input: ${err.message}`);
+              terminalManager.print(`Error reading input: ${err.message}`);
+            });
         }
 
         // Handle end of stdin
-        if (waitingForInput && outputBuffer.includes('VM_STDIN_END')) {
-          waitingForInput = false;
+        if (this.waitingForInput && outputBuffer.includes('VM_STDIN_END')) {
+          this.waitingForInput = false;
           outputBuffer = outputBuffer.replace('VM_STDIN_END', '');
           // this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
         }
@@ -491,12 +510,12 @@ export class RiscvDebugSession extends DebugSession {
           const state = this._vmHandler?.readStateJson();
           getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
           getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
-          this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
           if (state?.current_line) {
             this._currentLine = state?.current_line;
           }
+          this.sendEvent(new StoppedEvent('pause', RiscvDebugSession.THREAD_ID));
         }
-  
+
         if (outputBuffer.includes('VM_LAST_INSTRUCTION_STEPPED')) {
           const state = this._vmHandler?.readStateJson();
           this._currentLine = 0;
@@ -515,6 +534,7 @@ export class RiscvDebugSession extends DebugSession {
           getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
           this.sendEvent(new StoppedEvent('breakpoint', RiscvDebugSession.THREAD_ID));
           this.sendResponse(response);
+          this.isRunningContinue = false;
           return;
         }
 
@@ -523,18 +543,56 @@ export class RiscvDebugSession extends DebugSession {
           this._vmHandler?.vmExit();
           this.sendEvent(new TerminatedEvent());
           this.sendResponse(response);
+          this.isRunningContinue = false;
           return;
         }
 
+        if (outputBuffer.includes('VM_STOPPED')) {
+          this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
+          // const state = this._vmHandler?.readStateJson();
+          // if (state?.current_line) {
+          //   this._currentLine = state?.current_line;
+          // }
+          // getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
+          // getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
+          this.sendEvent(new StoppedEvent('pause', RiscvDebugSession.THREAD_ID));
+          this.sendResponse(response);
+          this.isRunningContinue = false;
+          console.log('VM stopped');
+          return;
+        }
       };
 
       this._vmHandler?.childProcess?.stdout?.on('data', onData);
     }
   }
 
+  protected pauseRequest(response: DebugProtocol.PauseResponse, args: DebugProtocol.PauseArguments): void {
+    this._vmHandler?.sendInput('stop');
+
+    const onData = (data: Buffer) => {
+      const output: string = data.toString();
+      if (output.includes('VM_STOPPED')) {
+        this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
+        const state = this._vmHandler?.readStateJson();
+        getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
+        getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
+        if (state?.current_line) {
+          this._currentLine = state.current_line;
+        }
+        this.sendEvent(new StoppedEvent('pause', RiscvDebugSession.THREAD_ID));
+        this.sendResponse(response);
+        this.isRunningContinue = false;
+        console.log('VM paused');
+      }
+    };
+    this._vmHandler?.childProcess?.stdout?.on('data', onData);
+
+    
+  }
 
   protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
-    if (!this._vmHandler || !this._vmHandler.isRunning()) {
+    if (!this._vmHandler || !this._vmHandler.isRunning() || this.isRunningContinue) {
       return this.sendResponse(response);
     }
 
@@ -545,17 +603,15 @@ export class RiscvDebugSession extends DebugSession {
     const onData = (data: Buffer) => {
       outputBuffer += data.toString();
 
-      // Extract and emit any VM_STDOUT blocks using regex
       const stdoutRegex = /VM_STDOUT_START([\s\S]*?)VM_STDOUT_END/g;
       let match;
       while ((match = stdoutRegex.exec(outputBuffer)) !== null) {
         const stdoutContent = match[1];
         terminalManager.print(stdoutContent);
-        console.log(`Stdout ecall output: ${stdoutContent}`);
+        console.log(`Stdout ecall output: ${outputBuffer}`);
         // this.sendEvent(new OutputEvent(stdoutContent + '\n'));
       }
 
-      // Remove processed stdout blocks
       outputBuffer = outputBuffer.replace(stdoutRegex, '');
 
       // Handle STDIN
@@ -579,7 +635,6 @@ export class RiscvDebugSession extends DebugSession {
         this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
       }
 
-      // Handle other VM messages
       if (outputBuffer.includes('VM_STEP_COMPLETED')) {
         this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
         const state = this._vmHandler?.readStateJson();
@@ -624,7 +679,7 @@ export class RiscvDebugSession extends DebugSession {
   }
 
   protected stepBackRequest(response: DebugProtocol.StepBackResponse, args: DebugProtocol.StepBackArguments): void {
-    if (this._vmHandler && this._vmHandler.isRunning()) {
+    if (this._vmHandler && this._vmHandler.isRunning() && !this.isRunningContinue) {
       this._vmHandler.vmUndo();
       const state = this._vmHandler.readStateJson();
       if (state.current_line) {

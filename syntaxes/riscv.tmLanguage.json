@@ -30,7 +30,7 @@
       "patterns": [
         {
           "name": "storage.type.directive.riscv",
-          "match": "\\.(text|data|bss|section|global|byte|half|word|dword|float|double)\\b"
+          "match": "\\.(text|data|bss|section|global|byte|half|word|dword|float|double|string)\\b"
         }
       ]
     },
@@ -74,6 +74,10 @@
         {
           "name": "keyword.instruction.base.64.riscv",
           "match": "\\b(addw|subw|sllw|srlw|sraw|addiw|slliw|srliw|sraiw|lwu|ld|sd)\\b"
+        },
+        {
+          "name": "keyword.instruction.pseudo.riscv",
+          "match": "\\b(la|li|mv|neg|not|seqz|snez|sltiu|sltu|sltz|sgtz|beqz|bnez|bgtz|bltz|bgez)\\b"
         },
         {
           "name": "keyword.instruction.zicsr.riscv",

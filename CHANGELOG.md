@@ -34,3 +34,9 @@ All notable changes to this project will be documented in this file.
 
 - More terminal fixes for syscall integrations
 
+## [0.0.16] - 2025-18-06
+
+### Added
+
+- Added syntax highlighting for pseudo instructions
+- Added option to change the data segment base address  

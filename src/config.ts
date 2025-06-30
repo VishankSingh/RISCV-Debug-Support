@@ -9,9 +9,13 @@ const vmBinaryDir = path.dirname(vmBinaryPath);
 console.log(`VM Binary Directory: ${vmBinaryDir}`);
 const registerDumpPath = path.join(vmBinaryDir, 'vm_state', 'registers_dump.json');
 
+const configIniPath = path.join(vmBinaryDir, 'vm_state', 'config.ini');
+
+
 export const getVmBinaryPath = () => vmBinaryPath;
 
 export {
   vmBinaryPath,
-  registerDumpPath
+  registerDumpPath,
+  configIniPath
 };

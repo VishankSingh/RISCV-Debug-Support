@@ -1,8 +1,11 @@
 import { spawn } from 'child_process';
 import path from 'path';
-import fs from 'fs';
+import * as fs from 'fs';
+import * as ini from 'ini';
+import * as vscode from 'vscode';
 
-import { vmBinaryPath } from './config';
+
+import { vmBinaryPath, configIniPath } from './config';
 
 class vmHandler {
   executablePath: string;
@@ -65,6 +68,11 @@ class vmHandler {
 
         if (output.includes('VM_STARTED')) {
           this.isVmRunning = true;
+          const run_step_delay = vscode.workspace.getConfiguration('riscv-debug-support').get('Execution.runStepDelay');
+          this.sendInput(`modify_config Execution run_step_delay ${run_step_delay}`);
+
+          const data_section_start = vscode.workspace.getConfiguration('riscv-debug-support').get('Memory.dataSectionStart');
+          this.sendInput(`modify_config Memory data_section_start ${data_section_start}`);
           resolve();
         }
       });
@@ -199,7 +207,7 @@ class vmHandler {
 
         const onData = (data: Buffer) => {
           const output: string = data.toString();
-          const match = output.match(/\[(.*?)\]/);
+          const match = output.match(new RegExp(`${address}\\[(.*?)\\]`));
           if (match) {
             const memoryData = match[1];
             this.childProcess.stdout.removeListener('data', onData);
@@ -207,7 +215,7 @@ class vmHandler {
           }
         };
 
-        this.childProcess.stdout.on('data', onData);
+        this.childProcess.stderr.on('data', onData);
       } else {
         reject(new Error('Child process is not running. Start the process first.'));
       }
