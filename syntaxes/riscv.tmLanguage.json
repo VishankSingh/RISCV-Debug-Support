@@ -30,7 +30,7 @@
       "patterns": [
         {
           "name": "storage.type.directive.riscv",
-          "match": "\\.(text|data|bss|section|global|byte|half|word|dword|float|double|string|zero)\\b"
+          "match": "\\(text|data|bss|section|global|byte|half|word|dword|float|double|string|zero)\\b"
         }
       ]
     },

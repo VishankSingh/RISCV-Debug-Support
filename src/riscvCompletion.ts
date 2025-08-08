@@ -60,9 +60,9 @@ const riscvRegisters = [
 
 
 const riscvDirectives = [
-  ".section", ".data", ".text", ".byte", ".half", ".word", ".dword", ".float", ".double", ".string", ".zero"
-  // ".ascii", ".asciz",
-  // ".space", ".global", ".extern", ".set", ".equ", ".org",".globl", ".align",
+  "section", "data", "text", "byte", "half", "word", "dword", "float", "double", "string", "zero"
+  // "ascii", "asciz",
+  // "space", "global", "extern", "set", "equ", "org","globl", "align",
 ];
 
 const riscvCompletions = [
