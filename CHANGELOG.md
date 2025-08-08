@@ -40,3 +40,33 @@ All notable changes to this project will be documented in this file.
 
 - Added syntax highlighting for pseudo instructions
 - Added option to change the data segment base address  
+
+## [0.0.19] - 2025-30-06
+
+### Fixed
+
+- Fixed terminal input cursor position issue
+
+## [0.0.21] - 2025-30-06
+
+### Fixed
+
+- Fixed terminal backspace issue
+
+## [1.0.0] - 2025-02-07
+
+### Added
+
+- Added disassembly view support
+
+## [1.0.4] - 2025-29-07
+
+### Fixed
+
+- Fixed issue with VM state not being initialized in working directory
+
+## [1.0.5] - 2025-08-08
+
+### Added
+
+- Added support for displaying register values in various formats (hex, binary, signed int, unsigned int, float, double, ascii)

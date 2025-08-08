@@ -2,7 +2,7 @@
   "name": "riscv-debug-support",
   "displayName": "RISC-V Debug Support",
   "description": "",
-  "version": "0.0.18",
+  "version": "1.0.5",
   "publisher": "Vishank",
   "engines": {
     "vscode": "^1.96.0"
@@ -37,10 +37,6 @@
       {
         "command": "riscv-debug-support.riscvSimpleDebug.getProgramName",
         "title": "Riscv Support: Get Program Name"
-      },
-      {
-        "command": "riscv-debug-support.openTerminal",
-        "title": "Riscv Support: Open RISC-V Terminal"
       }
     ],
     "viewsContainers": {},
@@ -49,7 +45,8 @@
         {
           "id": "riscvMemoryTools",
           "name": "Riscv VM utilities",
-          "when": "riscvDebugRunning"
+          "when": "riscvDebugRunning",
+          "icon": "media/bug.svg"
         }
       ]
     },
@@ -73,7 +70,6 @@
           "pattern": "^0x[0-9a-fA-F]+$",
           "description": "Memory size in bytes"
         },
-
         "riscv-debug-support.Memory.memorySize": {
           "type": "string",
           "default": "0xffffffffffffffff",
@@ -111,6 +107,15 @@
           ".S"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "riscv-disassembly",
+        "aliases": [],
+        "extensions": [".rvdasm"], 
+        "icon": {
+          "light": "media/bug.svg",
+          "dark":  "media/bug.svg"
+        }
       }
     ],
     "signatureHelp": [
@@ -167,7 +172,8 @@
             "request": "launch",
             "name": "Launch Program",
             "program": "${command:riscv-debug-support.riscvSimpleDebug.getProgramName}",
-            "stopOnEntry": true
+            "stopOnEntry": true,
+            "showDisassembly": "always"
           }
         ],
         "configurationSnippets": [
@@ -179,8 +185,26 @@
               "request": "launch",
               "name": "Launch Program",
               "program": "${command:riscv-debug-support.riscvSimpleDebug.getProgramName}",
-              "stopOnEntry": true
+              "stopOnEntry": true,
+              "showDisassembly": "always"
             }
+          }
+        ]
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "sample",
+        "title": "Sample",
+        "description": "A sample walkthrough",
+        "categories": ["getting-started"],
+        "steps": [
+          {
+            "id": "runcommand",
+            "title": "Run Command",
+            "description": "This step will run a command and check off once it has been run.\n[Run Command](command:riscv-debug-support.riscvSimpleDebug.getProgramName)",
+            "media": { "image": "media/bug.svg", "altText": "Empty image" },
+            "completionEvents": ["onCommand:riscv-debug-support.riscvSimpleDebug.getProgramName"]
           }
         ]
       }
@@ -215,8 +239,9 @@
     "webpack-cli": "^5.1.4"
   },
   "dependencies": {
+    "@vscode/codicons": "^0.0.36",
     "@vscode/debugadapter": "^1.68.0",
-    "@vscode/vsce": "^3.5.0",
+    "@vscode/vsce": "^3.6.0",
     "ini": "^5.0.0"
   }
 }

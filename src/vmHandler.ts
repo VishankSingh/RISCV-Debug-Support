@@ -5,7 +5,7 @@ import * as ini from 'ini';
 import * as vscode from 'vscode';
 
 
-import { vmBinaryPath, configIniPath } from './config';
+import { vmBinaryPath, configIniPath, vmStateDir } from './config';
 
 class vmHandler {
   executablePath: string;
@@ -25,36 +25,100 @@ class vmHandler {
   }
 
   readStateJson() {
-    const binaryDir = path.dirname(vmBinaryPath);
-    const vmStateDump = path.join(binaryDir, 'vm_state', 'vm_state_dump.json');
+    const vmStateDump = path.join(vmStateDir, 'vm_state_dump.json');
     const content = fs.readFileSync(vmStateDump, 'utf8');
     return JSON.parse(content);
   }
 
   readRegistersJson() {
-    const binaryDir = path.dirname(vmBinaryPath);
-    const vmRegistersDump = path.join(binaryDir, 'vm_state', 'registers_dump.json');
+    const vmRegistersDump = path.join(vmStateDir, 'registers_dump.json');
     const content = fs.readFileSync(vmRegistersDump, 'utf8');
     return JSON.parse(content);
   }
 
   readErrorsJson() {
-    const binaryDir = path.dirname(vmBinaryPath);
-    const vmErrorsDump = path.join(binaryDir, 'vm_state', 'errors_dump.json');
+    const vmErrorsDump = path.join(vmStateDir, 'errors_dump.json');
     const content = fs.readFileSync(vmErrorsDump, 'utf8');
     return JSON.parse(content);
   }
 
   readMemoryJson() {
-    const binaryDir = path.dirname(vmBinaryPath);
-    const vmMemoryDump = path.join(binaryDir, 'vm_state', 'memory_dump.json');
+    const vmMemoryDump = path.join(vmStateDir, 'memory_dump.json');
     const content = fs.readFileSync(vmMemoryDump, 'utf8');
     return JSON.parse(content);
   }
 
+  readDisassembly() {
+    const disassemblyFile = path.join(vmStateDir, 'disassembly.txt');
+    if (fs.existsSync(disassemblyFile)) {
+      const content = fs.readFileSync(disassemblyFile, 'utf8');
+      console.log('Disassembly content:', content);
+      return content;
+      // return content
+      //   .split('\n')
+      //   .map(line => line.trim())
+      //   .filter(line => line.length > 0)
+      //   .filter(line => !/^([0-9a-fA-F]+)\s+<.*>:$/.test(line))
+      //   .join('\n');
+    }
+    return '';
+  }
+
+  readDisassemblyArray(): Array<{ address: number; text: string }> {
+    const disassemblyFile = path.join(vmStateDir, 'disassembly.txt');
+    if (fs.existsSync(disassemblyFile)) {
+      const content = fs.readFileSync(disassemblyFile, 'utf8');
+      console.log('Disassembly content:', content);
+      // return content;
+      // return [{ address: 0, text: "text" }];
+      return content
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0)
+        .map(line => {
+          // Example line: "0x00000000: addi x1, x0, 5"
+          // if (
+          //   /^([0-9a-fA-Fx]16):\s1<.*>:$/.test(line) 
+          //   // || // e.g. 0000000000000034 <test>:
+          //   // /^address\s+<.*>:$/.test(line)              // e.g. address <label>:
+          // ) {
+          //   return null;
+          // }
+          // const match = line.match(/^\s*([0-9a-fA-F]+):\s+([0-9a-fA-F]{8})\s+(.*)$/);
+          // const match2 = line.match(/^([0-9a-fA-Fx]+)\s+<.*>:/);
+          // if (match) {
+          //   const address = parseInt(match[1], 16);
+          //   const text = match[2] + ' ' + match[3];
+          //   return { address, text };
+          // } else {
+          //   // If parsing fails, use 0 as address and the whole line as text
+          //   return { address: 0, text: line };
+          // }
+          const match = line.match(/^([0-9a-fA-F]+):\s+([0-9a-fA-F]{8})\s+(.*)$/);
+          if (match) {
+            const address = parseInt(match[1], 16);
+            const text = match[2] + ' ' + match[3];
+            return { address, text };
+          }
+
+          // Skip labels like "0000000000000034 <test>:"
+          const labelMatch = line.match(/^[0-9a-fA-F]+ <.*>:/);
+          if (labelMatch) {return null;}
+
+          // Skip unrecognized lines
+          return null;
+
+        })
+        .filter((item): item is { address: number; text: string } => item !== null);
+    }
+    return [];
+  }
+
 
   startProcess(): Promise<void> {
-    const cwd = path.dirname(this.executablePath);
+    // const cwd = path.dirname(this.executablePath);
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? path.dirname(this.executablePath);
+
 
     this.childProcess = spawn(this.executablePath, this.args, {
       cwd,

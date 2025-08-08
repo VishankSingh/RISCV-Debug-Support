@@ -8,7 +8,7 @@ const gpregRegex = /\b(x[0-9]{1,2}|a[0-9]|s[0-9]|t[0-9]|ra|sp|gp|tp)\b/;
 const fpregRegex = /\b(f[0-9]{1,2})\b/;
 const csregRegex = /\b(fflags|frm|fcsr)\b/;
 
-const directiveRegex = /^\.(section|data|text|globl|byte|half|word|dword|float|double)$/;
+const directiveRegex = /^\.(section|data|text|bss|globl|byte|half|word|dword|float|double|string|zero)$/;
 
 
 

@@ -8,6 +8,8 @@ import { vmBinaryPath } from './config';
 
 import { completionProvider } from './riscvCompletion';
 
+import { DisassemblyDocument } from './debugger/disassemblyDoc';
+export let disassemblyDoc: DisassemblyDocument;   // exported handle
 
 
 
@@ -16,6 +18,9 @@ const vmHandlerInstance = new vmHandler(vmBinaryPath, ['--vm-as-backend', '--sta
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('Congratulations, your extension "riscv-debug-support" is now active!');
+
+  disassemblyDoc = new DisassemblyDocument(context);
+
 
   function yourFunction(newValue: any) {
     console.log('New setting value:', newValue);
@@ -101,6 +106,16 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
+
+  vscode.debug.onDidReceiveDebugSessionCustomEvent(event => {
+    if (event.session.type === 'riscvSimpleDebug' && event.event === 'CustomEvent') {
+      const threadId = event.body?.threadId;
+      if (typeof threadId === 'number') {
+        pulseDisassemblyHighlight(threadId);
+      }
+    }
+  });
+
   // Register command used in configuration
   context.subscriptions.push(
     vscode.commands.registerCommand('riscv-debug-support.riscvSimpleDebug.getProgramName', config => {
@@ -114,12 +129,6 @@ export function activate(context: vscode.ExtensionContext) {
       });
     })
   );
-
-
-
-
-
-
 
 
 
@@ -182,29 +191,26 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
 
-
-  //================================================================================================
-  // context.subscriptions.push(
-  //   vscode.commands.registerCommand('riscv-debug-support.openTerminal', () => {
-  //     const pty = new VmTerminal();
-  //     const terminal = vscode.window.createTerminal({ name: 'RISC-V VM', pty });
-  //     terminal.show();
-  //   })
-  // );
-
-  // const terminal = vscode.window.createTerminal({
-  //   name: 'RISC-V VM',
-  //   pty: vmTerminal
-  // });
-  // terminal.show();
-
-
-
-
-
 }
 
 export function deactivate() { }
+
+async function pulseDisassemblyHighlight(threadId: number) {
+  await vscode.commands.executeCommand('workbench.action.debug.selectStackFrame', {
+    threadId,
+    frameId: 1
+  });
+
+  // await new Promise(resolve => setTimeout(resolve, 0));
+
+  await vscode.commands.executeCommand('workbench.action.debug.selectStackFrame', {
+    threadId,
+    frameId: 0
+  });
+}
+
+
+
 
 class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
   createDebugAdapterDescriptor(_session: vscode.DebugSession): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {

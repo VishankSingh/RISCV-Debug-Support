@@ -10,15 +10,12 @@ import { basename } from 'path';
 import * as vscode from 'vscode';
 
 import { diagnosticCollection } from '../riscvLinter';
-
-
 import { getProgramCounterLabel, getInstructionsExecutedLabel } from './statusBar';
-
 import { showMemoryDumpAsWebview } from '../views/showMemory';
-
 import { terminalManager } from './terminalManager';
+import { disassemblyDoc } from '../extension';
 
-
+import { mapRegisterName } from '../utils';
 
 interface LaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
   program: string;
@@ -42,18 +39,33 @@ interface VmHandler {
   vmDumpMemory(ranges: string): void;
   vmGetMemoryData(address: string): Promise<string>;
   vmModifyRegister(register: string, value: string): Boolean;
-  readStateJson(): { program_counter?: string; current_line?: number; current_instruction?: string; instructions_retired?: number; output_status?: string; breakpoints?: number[] };
+  readStateJson(): { program_counter?: string; current_line?: number; disassembly_line_number?: number, current_instruction?: string; instructions_retired?: number; output_status?: string; breakpoints?: number[] };
   readRegistersJson(): { gp_registers?: any; fp_registers?: any; "control and status registers"?: any };
   readErrorsJson(): { errorCode?: number; errors?: { line: number; message: string }[] };
   readMemoryJson(): Record<string, string>;
+  readDisassembly(): string;
+  readDisassemblyArray(): Array<{ address: number; text: string }>;
 }
+
+interface RuntimeBreakpoint {
+  id: number;
+  line: number;
+  condition: string;
+  hitCondition: string;
+  logMessage: string;
+  hits: number;          // live hit counter (updated when PC arrives)
+}
+
 
 export class RiscvDebugSession extends DebugSession {
   private static THREAD_ID = 1;
-  private _variableHandles = new Handles<string>();
+  private _variableHandles = new Handles<string | { reg: string; value: string; type: 'register_detail' }>();;
   private _currentLine = 0;
+  private _disassemblyLine = 0;
   private _sourceFile: string = '';
+  private _nextBpId = 1;
   private _breakpoints = new Map<string, number[]>();
+  // private _breakpoints = new Map<string, RuntimeBreakpoint[]>();
   private _vmHandler: VmHandler | null = null;
   private waitingForInput: Boolean = false;
 
@@ -72,11 +84,14 @@ export class RiscvDebugSession extends DebugSession {
     response.body.supportsEvaluateForHovers = true;
     response.body.supportsStepBack = true;
     response.body.supportsBreakpointLocationsRequest = true;
+    // response.body.supportsConditionalBreakpoints = true;
+    // response.body.supportsHitConditionalBreakpoints = true;
+    // response.body.supportsLogPoints = true;
     response.body.supportsRestartRequest = true;
     response.body.supportTerminateDebuggee = true;
     response.body.supportsTerminateRequest = true;
     response.body.supportsSetVariable = true;
-
+    response.body.supportsDisassembleRequest = true;
     this.sendResponse(response);
     this.sendEvent(new InitializedEvent());
   }
@@ -152,9 +167,16 @@ export class RiscvDebugSession extends DebugSession {
           );
           this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
           const state = this._vmHandler ? this._vmHandler.readStateJson() : {};
-          if (state.current_line) {
-            this._currentLine = state.current_line;
-          }
+          // if (state.current_line) {
+          //   this._currentLine = state.current_line;
+          // }
+          // if (state.disassembly_line_number) {
+          //   this._disassemblyLine = state.disassembly_line_number;
+          // }
+          this.updateCurrentLine();
+
+          disassemblyDoc.open(this._vmHandler?.readDisassembly() || '', vscode.ViewColumn.Beside);
+          // disassemblyDoc.highlight(this._disassemblyLine);
 
           this.sendEvent(new OutputEvent(`Starting RISC-V debugger for: ${this._sourceFile}\n`));
           getProgramCounterLabel()!.text = `PC: ${state.program_counter ?? 0}`;
@@ -185,6 +207,10 @@ export class RiscvDebugSession extends DebugSession {
         if (state.current_line) {
           this._currentLine = state.current_line;
         }
+        if (state.disassembly_line_number) {
+          this._disassemblyLine = state.disassembly_line_number;
+        }
+        disassemblyDoc.highlight(this._disassemblyLine);
       } catch (error) {
         this.sendEvent(new OutputEvent(`Error reading VM state: ${error}\n`));
       }
@@ -193,11 +219,8 @@ export class RiscvDebugSession extends DebugSession {
 
   private restoreBreakpoints(): void {
     if (!this._vmHandler || !this._sourceFile) { return; }
-
     const currentFile = this._sourceFile;
     const breakpoints = this._breakpoints.get(currentFile) || [];
-
-
     // for (const [file, lines] of this._breakpoints.entries()) {
     //   for (const line of lines) {
     //     try {
@@ -213,31 +236,88 @@ export class RiscvDebugSession extends DebugSession {
       try {
         this._vmHandler.vmAddBreakpoint(line);
       } catch (error) {
-        this.sendEvent(new OutputEvent(`Failed to restore breakpoint at line ${line}: ${error}\n`));
+        this.sendEvent(
+          new OutputEvent(`Failed to restore breakpoint at line ${line}: ${error}\n`)
+        );
       }
     }
 
-
     this._breakpoints.clear();
-
     try {
       const state = this._vmHandler.readStateJson();
       const vmBreakpoints: number[] = state?.breakpoints || [];
-
       const confirmedBreakpoints: Breakpoint[] = [];
-
       this._breakpoints.set(currentFile, []);
       for (const bp of vmBreakpoints) {
         this._breakpoints.get(currentFile)!.push(bp);
         confirmedBreakpoints.push(new Breakpoint(true, bp));
       }
-
     } catch (error) {
       this.sendEvent(new OutputEvent(`Failed to read VM state for breakpoints: ${error}\n`));
     }
-
-
   }
+
+  // private restoreBreakpoints(): void {
+  //   if (!this._vmHandler || !this._sourceFile) { return; }
+
+  //   const currentFile = this._sourceFile;
+  //   const runtimeBps = this._breakpoints.get(currentFile) ?? [];
+
+  //   /* --------------------------------------------------------------- */
+  //   /* 1 — re‑install every breakpoint we already remember             */
+  //   /* --------------------------------------------------------------- */
+  //   for (const rbp of runtimeBps) {
+  //     try {
+  //       this._vmHandler.vmAddBreakpoint(rbp.line);
+  //     } catch (err) {
+  //       this.sendEvent(
+  //         new OutputEvent(`Failed to restore breakpoint at line ${rbp.line}: ${err}\n`)
+  //       );
+  //     }
+  //   }
+
+  //   /* --------------------------------------------------------------- */
+  //   /* 2 — reconcile with VM‑saved breakpoints (state.json)            */
+  //   /* --------------------------------------------------------------- */
+  //   try {
+  //     const state = this._vmHandler.readStateJson();
+  //     const vmLines: number[] = state?.breakpoints ?? [];
+
+  //     for (const line of vmLines) {
+  //       if (runtimeBps.some(b => b.line === line)) { continue; }   // already known
+
+  //       /* create a fresh RuntimeBreakpoint with empty metadata        */
+  //       const rbp: RuntimeBreakpoint = {
+  //         id: this._nextBpId++,
+  //         line,
+  //         condition: '',
+  //         hitCondition: '',
+  //         logMessage: '',
+  //         hits: 0
+  //       };
+  //       runtimeBps.push(rbp);
+
+  //       /* guard‑rail: make sure the VM really knows about it          */
+  //       try { this._vmHandler.vmAddBreakpoint(line); } catch { /* ignore */ }
+
+  //       /* tell VS Code so the gutter & Breakpoints view update        */
+  //       this.sendEvent(
+  //         new BreakpointEvent(
+  //           'new',
+  //           new Breakpoint(true, line)
+  //         )
+  //       );
+  //     }
+
+  //     /* ensure the map is up‑to‑date                                  */
+  //     this._breakpoints.set(currentFile, runtimeBps);
+
+  //   } catch (err) {
+  //     this.sendEvent(
+  //       new OutputEvent(`Failed to read VM state for breakpoints: ${err}\n`)
+  //     );
+  //   }
+  // }
 
   protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
     const path = args.source.path;
@@ -289,6 +369,116 @@ export class RiscvDebugSession extends DebugSession {
     this.sendResponse(response);
   }
 
+  // protected setBreakPointsRequest(
+  //   response: DebugProtocol.SetBreakpointsResponse,
+  //   args: DebugProtocol.SetBreakpointsArguments
+  // ): void {
+  //   const path = args.source.path;
+  //   const vscodeBreakpoints: DebugProtocol.Breakpoint[] = [];
+
+  //   /* 1 ― breakpoints for unrelated files → mark “unverified” and exit */
+  //   if (!path || path !== this._sourceFile) {
+  //     for (const sbp of args.breakpoints ?? [])
+  //       vscodeBreakpoints.push(new Breakpoint(false, sbp.line));
+  //     response.body = { breakpoints: vscodeBreakpoints };
+  //     this.sendResponse(response);
+  //     return;
+  //   }
+
+  //   /* 2 ― remove any previous breakpoints for this file from the VM */
+  //   for (const old of this._breakpoints.get(path) ?? []) {
+  //     if (this._vmHandler?.isRunning())
+  //       this._vmHandler.vmRemoveBreakpoint(old.line);
+  //   }
+  //   this._breakpoints.delete(path);
+
+  //   /* 3 ― register the new set */
+  //   if (args.breakpoints) {
+  //     const runtimeBps: RuntimeBreakpoint[] = [];
+
+  //     for (const sbp of args.breakpoints) {
+  //       const rbp: RuntimeBreakpoint = {
+  //         id: this._nextBpId++,
+  //         line: sbp.line,
+  //         condition: sbp.condition ?? '',
+  //         hitCondition: sbp.hitCondition ?? '',
+  //         logMessage: sbp.logMessage ?? '',
+  //         hits: 0
+  //       };
+
+  //       try {
+  //         if (this._vmHandler?.isRunning())
+  //           this._vmHandler.vmAddBreakpoint(rbp.line);
+
+  //         runtimeBps.push(rbp);
+  //         vscodeBreakpoints.push(
+  //           new Breakpoint(true, rbp.line)
+  //         );
+  //       } catch (err) {
+  //         vscodeBreakpoints.push(new Breakpoint(false, rbp.line));
+  //         this.sendEvent(
+  //           new OutputEvent(`Failed to set breakpoint at line ${rbp.line}: ${err}\n`)
+  //         );
+  //       }
+  //     }
+
+  //     if (runtimeBps.length)
+  //       this._breakpoints.set(path, runtimeBps);
+  //   }
+
+  //   response.body = { breakpoints: vscodeBreakpoints };
+  //   this.sendResponse(response);
+  // }
+
+
+  // private onBreakpoint(runtimeBp: RuntimeBreakpoint, ctx: any): void {
+  //   // 1. conditional?
+  //   // if (runtimeBp.condition) {
+  //   //   if (!this._runtime.evalBoolean(runtimeBp.condition, ctx)) return; // ignore
+  //   // }
+
+  //   // 2. hit‑count?
+  //   runtimeBp.hits = (runtimeBp.hits ?? 0) + 1;
+  //   if (runtimeBp.hitCondition &&
+  //     !this.hitCountSatisfied(runtimeBp.hitCondition, runtimeBp.hits)) {
+  //     return;                      // ignore
+  //   }
+
+  //   // 3. logpoint?
+  //   if (runtimeBp.logMessage) {
+  //     const msg = this.interpolate(runtimeBp.logMessage, ctx);
+  //     this.sendEvent(new OutputEvent(msg + '\n', 'console'));
+  //     return;                      // continue execution
+  //   }
+
+  //   // 4. real stop
+  //   this.sendEvent(new StoppedEvent('breakpoint', ctx.threadId));
+  // }
+
+  // /**
+  //  * Interpolates variables in a log message using the context.
+  //  * Supports replacing {var} with ctx[var] if present.
+  //  */
+  // private interpolate(template: string, ctx: any): string {
+  //   return template.replace(/\{([^\}]+)\}/g, (match, varName) => {
+  //     if (ctx && varName in ctx) {
+  //       return String(ctx[varName]);
+  //     }
+  //     return match;
+  //   });
+  // }
+
+  // private hitCountSatisfied(expr: string, hits: number): boolean {
+  //   // allow "10", ">=7", "==3", "%5==0"  – extend as you like
+  //   if (/^\d+$/.test(expr)) return hits === +expr;
+  //   if (/^>=\d+$/.test(expr)) return hits >= +expr.slice(2);
+  //   if (/^==\d+$/.test(expr)) return hits === +expr.slice(2);
+  //   const m = expr.match(/^%(\d+)==0$/);
+  //   if (m) return hits % +m[1] === 0;
+  //   // fall back: never satisfied
+  //   return false;
+  // }
+
   protected threadsRequest(response: DebugProtocol.ThreadsResponse): void {
     response.body = {
       threads: [
@@ -301,14 +491,31 @@ export class RiscvDebugSession extends DebugSession {
   protected stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): void {
     this.updateCurrentLine();
 
-    const frames = [
-      new StackFrame(
-        0,
-        `Line ${this._currentLine}`,
-        this.createSource(this._sourceFile),
-        this._currentLine,
-        1
-      )
+    const mainFrame = new StackFrame(
+      0,
+      `Line ${this._currentLine}`,
+      this.createSource(this._sourceFile),
+      this._currentLine,
+      1
+    );
+    // const disasmSource = new Source(
+    //   'disassembly',   // tab title
+    //   undefined,       // no path – forces sourceRequest
+    //   42               // <-- unique positive int
+    // );
+    // const ipRef = '0x' + this._disassemblyLine.toString(16);
+    // const disAsmFrame = new StackFrame(
+    //   1,
+    //   `Disassembly Line ${this._disassemblyLine}`,
+    //   disasmSource,
+    //   this._disassemblyLine,
+    //   1
+    // );
+    // disAsmFrame.instructionPointerReference = ipRef;
+    const frames: DebugProtocol.StackFrame[] = [
+      mainFrame
+      ,
+      // disAsmFrame
     ];
 
     response.body = {
@@ -316,6 +523,19 @@ export class RiscvDebugSession extends DebugSession {
       totalFrames: 1
     };
     this.sendResponse(response);
+  }
+
+  protected sourceRequest(
+    response: DebugProtocol.SourceResponse,
+    args: DebugProtocol.SourceArguments
+  ): void {
+    if (args.sourceReference === 42) {
+      const text = this._vmHandler?.readDisassembly() ?? '';
+      response.body = { content: text, mimeType: 'text/plain' };
+      this.sendResponse(response);
+      return;
+    }
+    // otherwise delegate to super / error
   }
 
   protected scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments): void {
@@ -370,7 +590,9 @@ export class RiscvDebugSession extends DebugSession {
           }
         );
 
-      } else if (id === 'gp_registers' || id === 'fp_registers' || id === 'csr_registers') {
+      } 
+      
+      else if (id === 'gp_registers' || id === 'fp_registers' || id === 'csr_registers') {
         const state = this._vmHandler.readRegistersJson();
 
 
@@ -381,15 +603,80 @@ export class RiscvDebugSession extends DebugSession {
 
         if (subRegs && typeof subRegs === 'object') {
           for (const [reg, value] of Object.entries(subRegs)) {
+
+            // variables.push({
+            //   name: reg,
+            //   type: 'register',
+            //   value: value,
+            //   variablesReference: 1
+            // });
+            const handle = this._variableHandles.create({ reg, value, type: 'register_detail' });
             variables.push({
               name: reg,
               type: 'register',
-              value: value,
-              variablesReference: 1
+              value: `0x${value}`,
+              variablesReference: handle
             });
+
+
+            
           }
         }
+      } else if (
+        typeof id === 'object' &&
+        id !== null &&
+        'type' in id &&
+        (id as any).type === 'register_detail'
+      ) {
+        const { value } = id as { type: string; value: string };
+
+        const hex = value.replace(/^0x/, '').padStart(16, '0'); 
+
+        let binaryValue = 'Invalid';
+
+        let signedIntValue = 'Invalid';
+        let unsignedIntValue = 'Invalid';
+        let float32Value = 'Invalid';
+        let float64Value = 'Invalid';
+        let asciiValue = 'Invalid';
+
+        try {
+          const buf = Buffer.from(hex, 'hex');
+
+          const binary = [...buf].map(byte => byte.toString(2).padStart(8, '0')).join('');
+
+
+          const signedInt = buf.readBigInt64BE(0);
+          const unsignedInt = buf.readBigUInt64BE(0);
+
+          const float32 = buf.readFloatBE(0);
+          const float64 = buf.readDoubleBE(0);
+
+          const ascii = buf.toString('ascii').replace(/[^\x20-\x7E]/g, '.');
+
+          binaryValue = binary;
+          signedIntValue = signedInt.toString();
+          unsignedIntValue = unsignedInt.toString();
+          float32Value = float32.toString();
+          float64Value = float64.toString();
+          asciiValue = ascii;
+
+        } catch (err) {
+          console.error('Failed to parse register value:', err);
+        }
+
+        variables.push(
+          { name: 'hex', value: `0x${hex}`, variablesReference: 0 },
+          { name: 'binary', value: binaryValue, variablesReference: 0 },
+          { name: 'signed int', value: signedIntValue, variablesReference: 0 },
+          { name: 'unsigned int', value: unsignedIntValue, variablesReference: 0 },
+          { name: 'float', value: float32Value, variablesReference: 0 },
+          { name: 'double', value: float64Value, variablesReference: 0 },
+          { name: 'ascii', value: asciiValue, variablesReference: 0 }
+        );
       }
+
+
     } catch (error) {
       variables.push({
         name: 'error',
@@ -484,9 +771,7 @@ export class RiscvDebugSession extends DebugSession {
           const state = this._vmHandler?.readStateJson();
           getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
           getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
-          if (state?.current_line) {
-            this._currentLine = state?.current_line;
-          }
+          this.updateCurrentLine();
           this.sendEvent(new StoppedEvent('pause', RiscvDebugSession.THREAD_ID));
 
           terminalManager.read().then((line: string) => {
@@ -510,15 +795,14 @@ export class RiscvDebugSession extends DebugSession {
           const state = this._vmHandler?.readStateJson();
           getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
           getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
-          if (state?.current_line) {
-            this._currentLine = state?.current_line;
-          }
+          this.updateCurrentLine();
           this.sendEvent(new StoppedEvent('pause', RiscvDebugSession.THREAD_ID));
         }
 
         if (outputBuffer.includes('VM_LAST_INSTRUCTION_STEPPED')) {
           const state = this._vmHandler?.readStateJson();
           this._currentLine = 0;
+          this._disassemblyLine = 0;
           getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
           getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
           this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
@@ -527,9 +811,7 @@ export class RiscvDebugSession extends DebugSession {
         if (outputBuffer.includes('VM_BREAKPOINT_HIT')) {
           this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
           const state = this._vmHandler?.readStateJson();
-          if (state?.current_line) {
-            this._currentLine = state?.current_line;
-          }
+          this.updateCurrentLine();
           getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
           getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
           this.sendEvent(new StoppedEvent('breakpoint', RiscvDebugSession.THREAD_ID));
@@ -580,6 +862,9 @@ export class RiscvDebugSession extends DebugSession {
         if (state?.current_line) {
           this._currentLine = state.current_line;
         }
+        if (state?.disassembly_line_number) {
+          this._disassemblyLine = state.disassembly_line_number;
+        }
         this.sendEvent(new StoppedEvent('pause', RiscvDebugSession.THREAD_ID));
         this.sendResponse(response);
         this.isRunningContinue = false;
@@ -588,7 +873,7 @@ export class RiscvDebugSession extends DebugSession {
     };
     this._vmHandler?.childProcess?.stdout?.on('data', onData);
 
-    
+
   }
 
   protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
@@ -641,9 +926,7 @@ export class RiscvDebugSession extends DebugSession {
         getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
         getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
         this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
-        if (state?.current_line) {
-          this._currentLine = state?.current_line;
-        }
+        this.updateCurrentLine();
         return this.sendResponse(response);
       }
 
@@ -651,6 +934,7 @@ export class RiscvDebugSession extends DebugSession {
         this._vmHandler?.childProcess?.stdout?.removeListener('data', onData);
         const state = this._vmHandler?.readStateJson();
         this._currentLine = 0;
+        this._disassemblyLine = 0;
         getProgramCounterLabel()!.text = `PC: ${state?.program_counter ?? 0}`;
         getInstructionsExecutedLabel()!.text = `Instructions: ${state?.instructions_retired ?? 0}`;
         this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
@@ -682,9 +966,7 @@ export class RiscvDebugSession extends DebugSession {
     if (this._vmHandler && this._vmHandler.isRunning() && !this.isRunningContinue) {
       this._vmHandler.vmUndo();
       const state = this._vmHandler.readStateJson();
-      if (state.current_line) {
-        this._currentLine = state.current_line;
-      }
+      this.updateCurrentLine();
       getProgramCounterLabel()!.text = `PC: ${state.program_counter ?? 0}`;
       getInstructionsExecutedLabel()!.text = `Instructions: ${state.instructions_retired ?? 0}`;
       this.sendEvent(new StoppedEvent('step', RiscvDebugSession.THREAD_ID));
@@ -749,6 +1031,8 @@ export class RiscvDebugSession extends DebugSession {
             if (state.current_line) {
               this._currentLine = state.current_line;
             }
+            disassemblyDoc.update(this._vmHandler?.readDisassembly() || '');
+            // disassemblyDoc.highlight(this._disassemblyLine);
             getProgramCounterLabel()!.text = `PC: ${state.program_counter ?? 0}`;
             getInstructionsExecutedLabel()!.text = `Instructions: ${state.instructions_retired ?? 0}`;
             this.restoreBreakpoints();
@@ -775,6 +1059,7 @@ export class RiscvDebugSession extends DebugSession {
       this._vmHandler.vmExit();
       this.sendEvent(new OutputEvent('VM stopped\n'));
     }
+    disassemblyDoc.close();
     this.sendEvent(new TerminatedEvent());
     this.sendResponse(response);
   }
@@ -784,14 +1069,39 @@ export class RiscvDebugSession extends DebugSession {
       this._vmHandler.vmExit();
       this.sendEvent(new OutputEvent('VM stopped via disconnect\n'));
     }
+    disassemblyDoc.close();
     this.sendResponse(response);
   }
 
   protected evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): void {
-    const expr = args.expression.trim();
+    let expr = args.expression.trim();
     const state = this._vmHandler?.readRegistersJson();
 
     let result: string = '';
+
+    // const registerAliasMap: Record<string, string> = {
+    //   // Integer registers
+    //   zero: 'x0', ra: 'x1', sp: 'x2', gp: 'x3', tp: 'x4',
+    //   t0: 'x5', t1: 'x6', t2: 'x7',
+    //   s0: 'x8', fp: 'x8', s1: 'x9',
+    //   a0: 'x10', a1: 'x11', a2: 'x12', a3: 'x13', a4: 'x14', a5: 'x15', a6: 'x16', a7: 'x17',
+    //   s2: 'x18', s3: 'x19', s4: 'x20', s5: 'x21', s6: 'x22', s7: 'x23', s8: 'x24', s9: 'x25', s10: 'x26', s11: 'x27',
+    //   t3: 'x28', t4: 'x29', t5: 'x30', t6: 'x31',
+    //   // Floating-point registers
+    //   ft0: 'f0',  ft1: 'f1',  ft2: 'f2',  ft3: 'f3',  ft4: 'f4',  ft5: 'f5',  ft6: 'f6',  ft7: 'f7',
+    //   fs0: 'f8',  fs1: 'f9',
+    //   fa0: 'f10', fa1: 'f11', fa2: 'f12', fa3: 'f13', fa4: 'f14', fa5: 'f15', fa6: 'f16', fa7: 'f17',
+    //   fs2: 'f18', fs3: 'f19', fs4: 'f20', fs5: 'f21', fs6: 'f22', fs7: 'f23', fs8: 'f24', fs9: 'f25', fs10: 'f26', fs11: 'f27',
+    //   ft8: 'f28', ft9: 'f29', ft10: 'f30', ft11: 'f31'
+    // };
+
+    // let mappedExpr = expr;
+    // if (registerAliasMap.hasOwnProperty(expr)) {
+    //   // mappedExpr = registerAliasMap[expr];
+    //   expr = registerAliasMap[expr];
+    // }
+
+    expr = mapRegisterName(expr);
 
     try {
       if (/^x([0-9]|[1-2][0-9]|3[0-1])$/.test(expr)) {

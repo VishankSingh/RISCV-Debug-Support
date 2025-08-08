@@ -28,6 +28,7 @@ class VmTerminal implements vscode.Pseudoterminal {
 
 
   private inputBuffer = '';
+  private cursorIndex: number = 0;
   private inputResolvers: ((line: string) => void)[] = [];
   private pendingOutput: string[] = [];
 
@@ -63,11 +64,11 @@ class VmTerminal implements vscode.Pseudoterminal {
       '                    nP"     "*MMnx               ',
       '',
       // `${ANSI.reset}`,
-      `${ANSI.yellow}RISC-V VM Terminal v0.0.18${ANSI.reset}`,
+      `${ANSI.yellow}RISC-V VM Terminal v1.0.1${ANSI.reset}`,
       // `${ANSI.yellow}Author:${ANSI.reset}    Vishank Singh, https://github.com/VishankSingh`,
       // `${ANSI.yellow}Docs:${ANSI.reset}      https://example.com/docs`,
-      `${ANSI.yellow}[Virtual machine src]${ANSI.reset} https://github.com/VishankSingh/riscv-simulator-2`,
-      `${ANSI.yellow}[VSCode Extension src]${ANSI.reset} https://github.com/VishankSingh/RISCV-Debug-Support`,
+      // `${ANSI.yellow}[Virtual machine src]${ANSI.reset} https://github.com/VishankSingh/riscv-simulator-2`,
+      // `${ANSI.yellow}[VSCode Extension src]${ANSI.reset} https://github.com/VishankSingh/RISCV-Debug-Support`,
       '',
       // `${ANSI.green}Type 'help' to get started.${ANSI.reset}`,
       `${ANSI.green}Press ↑↓ to browse history.${ANSI.reset}`,
@@ -109,6 +110,7 @@ class VmTerminal implements vscode.Pseudoterminal {
       const line = this.inputBuffer;
       this.inputBuffer = '';
 
+
       // Clear line and show only user input
       // this.writeEmitter.fire('' + line + '\r\n');
       this.writeEmitter.fire('\r\n');
@@ -142,11 +144,20 @@ class VmTerminal implements vscode.Pseudoterminal {
 
       }
 
+      this.cursorIndex = 0;
     } else if (data === '\x7f') { // Handle backspace
-      if (this.inputBuffer.length > 0) {
-        this.inputBuffer = this.inputBuffer.slice(0, -1);
-        this.writeEmitter.fire('\b \b');
+      // if (this.inputBuffer.length > 0) {
+      //   this.inputBuffer = this.inputBuffer.slice(0, -1);
+      //   this.writeEmitter.fire('\b \b');
+      // }
+      if (this.cursorIndex > 0) {
+        this.inputBuffer =
+          this.inputBuffer.slice(0, this.cursorIndex - 1) +
+          this.inputBuffer.slice(this.cursorIndex);
+        this.cursorIndex--;
+        this.redrawInputBuffer();
       }
+
 
     } else if (data === '\x1b[A') { // Handle up arrow
       if (this.history.length > 0) {
@@ -161,9 +172,32 @@ class VmTerminal implements vscode.Pseudoterminal {
         this.replaceCurrentLine(next);
       }
 
-    } else {
-      this.inputBuffer += data;
-      this.writeEmitter.fire(data);
+    } else if (data === '\x1b[D') { // Left arrow
+      if (this.cursorIndex > 0) {
+        this.cursorIndex--;
+        this.writeEmitter.fire('\x1b[D'); // Move cursor left
+      }
+
+    } else if (data === '\x1b[C') { // Right arrow
+      if (this.cursorIndex < this.inputBuffer.length) {
+        this.cursorIndex++;
+        this.writeEmitter.fire('\x1b[C'); // Move cursor right
+      }
+
+    }
+
+    else {
+      // this.inputBuffer += data;
+      // this.writeEmitter.fire(data);
+      this.inputBuffer =
+        this.inputBuffer.slice(0, this.cursorIndex) +
+        data +
+        this.inputBuffer.slice(this.cursorIndex);
+
+      this.cursorIndex++;
+
+      this.redrawInputBuffer();
+
     }
   }
 
@@ -187,6 +221,18 @@ class VmTerminal implements vscode.Pseudoterminal {
     //   }
     // }
   }
+
+  private redrawInputBuffer() {
+    this.writeEmitter.fire(ANSI.clearLine);
+    this.writeEmitter.fire(VmTerminal.PROMPT + this.inputBuffer);
+
+    const promptLength = 3;
+    const moveLeft = this.inputBuffer.length - this.cursorIndex;
+    if (moveLeft > 0) {
+      this.writeEmitter.fire(`\x1b[${moveLeft}D`);
+    }
+  }
+
 
 
   readLine(): Promise<string> {
